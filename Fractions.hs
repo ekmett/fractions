@@ -100,20 +100,19 @@ brent :: CF -> Cyc Integer
 brent (CF p f s0) = go (1 :: Integer) 2 (p s0) s0 where
   go k n t s = case f s of
     Stop -> Cyc []
-    Skip s' ->
-      if t s
-      then Cyc (til t s')
-      else if k == n
-      then go 1 (n*2) (p s') s'
-      else go (k+1) n t s'
+    Skip s' 
+      | t s       -> Cyc (til n t s')
+      | k == n    -> go 1 (n*2) (p s') s'
+      | otherwise -> go (k+1) n t s'
     Step r s' -> r :+ if t s
-      then Cyc (til t s')
+      then Cyc (til n t s)
       else if k == n
       then go 1 (n*2) (p s') s'
       else go (k+1) n t s'
-  til t s = case f s of
-    Step r s' -> r : if t s' then [] else til t s'
-    Skip s'   -> if t s' then [] else til t s'
+  til 0 _ _ = []
+  til n t s = case f s of
+    Step r s' -> r : if t s then [] else til (n - 1) t s'
+    Skip s'   -> if t s then [] else til (n - 1) t s'
     Stop      -> []
 
 coefs :: CF -> [Integer]
