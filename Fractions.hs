@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies, FlexibleContexts, TypeSynonymInstances, FlexibleInstances #-}
 
+import Data.Coerce
 import Data.Function (on)
-import Data.Monoid
 import Data.Ratio
 import Numeric.Natural
 import GHC.Real
@@ -60,50 +60,6 @@ newtype CF = CF { coefs :: [Integer] }
 infinity :: CF
 infinity = CF []
 
-class Fractional (Frac a) => HasFrac a where
-  -- | The field of fractions
-  type Frac a :: *
-  embed :: a -> Frac a
-  extract :: Frac a -> (a, a)
-
-instance HasFrac Integer where
-  type Frac Integer = Rational
-  embed = fromInteger
-  extract r = (numerator r, denominator r)
- 
-instance HasFrac Rational where
-  type Frac Rational = Rational
-  embed = id
-  extract r = (numerator r :% 1, denominator r :% 1)
-
-instance HasFrac CF where
-  type Frac CF = CF
-  embed = id
-  extract r = (r, 1)
-
-{-
--- | The representation of a continued fraction is _almost_ unique.
---
--- Convert a continued fraction in trailing 1 form.
---
--- if e > 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
--- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1] -- ?
-
-nf :: [Integer] -> [Integer]
-nf [] = []
-nf (a0:as) = case compare a0 0 of
-    LT -> neg a0 as
-    EQ -> 0 : nf as
-    GT -> pos a0 as
-  where
-    neg (-1) [] = [-1]
-    neg an [] = [an+1,-1]
-    neg an (b:bs) = an : neg b bs
-    pos 1 [] = [1]
-    pos an [] = [an-1,1]
-    pos an (b:bs) = an : pos b bs
--}
-
 instance Eq CF where
   as == bs = compare as bs == EQ
 
@@ -129,9 +85,12 @@ phi = CF ones where ones = 1:ones
 
 -- | Compute a series of convergents, which alternate between optimal conservative approximations above and below to the actual answer, in increasing order by |denominator|, such that given the denominator any rational that lies closer to the real answer must have a larger denominator.
 convergents  :: Fractional a => CF -> [a]
-convergents (CF xs)
-  = map (\(Mobius a _ c _) -> fromRational (a :% c))
-  $ tail $ scanl ingest (Mobius 1 0 0 1) xs
+convergents (CF xs0) = go 1 0 0 1 xs0 where
+  go a b c d [] = []
+  go a b c d (y:ys) = fromRational (e :% f) : go e a f c ys
+    where e = a*y+b; f = c*y+d
+
+-- = map (\(Mobius a _ c _) -> fromRational (a :% c)) $ tail $ scanl ingest (Mobius 1 0 0 1) xs
 
 -- | bihomographic transformations
 --
@@ -140,15 +99,14 @@ convergents (CF xs)
 --     -----------------
 --     exy + fx + gy + h
 -- @
-
-data Gosper = Gosper
-  !Integer !Integer !Integer !Integer
-  !Integer !Integer !Integer !Integer
-
-gosper :: Integer -> Integer -> Integer -> Integer
-       -> Integer -> Integer -> Integer -> Integer
-       -> CF -> CF -> CF
-gosper a b c d e f g h x y = undefined
+bihom :: Integer -> Integer -> Integer -> Integer
+      -> Integer -> Integer -> Integer -> Integer
+      -> CF -> CF -> CF
+bihom = coerce go where
+  go :: Integer -> Integer -> Integer -> Integer
+     -> Integer -> Integer -> Integer -> Integer
+     -> [Integer] -> [Integer] -> [Integer]
+  go a b c d e f g h x y = undefined
   -- TODO:
 
   -- with a<->d = e<->h order
@@ -163,7 +121,7 @@ gosper a b c d e f g h x y = undefined
 
 -- | 
 -- @
--- z = Mobius a b c d
+-- z = hom a b c d
 -- @
 -- 
 -- represents an homographic equation of the form
@@ -174,69 +132,26 @@ gosper a b c d e f g h x y = undefined
 --     cx + d
 -- @
 --
--- with integer coefficients, such that c /= 0.
-data Mobius = Mobius Integer Integer Integer Integer
-  deriving (Eq,Ord,Show,Read)
-
-det :: Mobius -> Integer
-det (Mobius a b c d) = a*d - b*c
-
-digit :: Integer -> Mobius
-digit a = Mobius a 1 1 0
-
-invert :: Mobius -> Mobius
-invert (Mobius a b c d) = Mobius (-d) b c (-a)
-
-instance Monoid Mobius where
-  mempty = Mobius 1 0 0 1
-  Mobius a b c d `mappend` Mobius e f g h
-    = Mobius
-      (a*e+b*g) (a*f+b*h)
-      (c*e+d*g) (c*f+d*h)
-
--- |
--- @
--- ingest m n = m <> Mobius n 1 1 0
--- @
-ingest :: Mobius -> Integer -> Mobius
-ingest (Mobius a b c d) p = Mobius (a*p+b) a (c*p+d) c
-
--- | 
--- @
--- starve m = m <> Mobius 1 1 0 0
--- @
-starve :: Mobius -> Mobius
-starve (Mobius a _ c _) = Mobius a a c c
-
--- |
--- @
--- egest n m = Mobius 0 1 1 n <> m
--- @
-egest :: Integer -> Mobius -> Mobius
-egest q (Mobius a b c d) = Mobius c d (a - c*q) (b - d*q)
-
--- | homographic / Mobius transformation
---
-mobius :: Integer -> Integer -> Integer -> Integer -> CF -> CF
-mobius a b c d (CF xs) = CF $ hom (Mobius a b c d) xs
-
-hom :: Mobius -> [Integer] -> [Integer]
-hom (Mobius 1 0 0 1) xs = xs
-hom (Mobius _ _ 0 0) _  = []
-hom m@(Mobius a b c d) xs
-  | c /= 0 && d /= 0
-  , q <- quot a c
-  , q == quot b d
-  = q : hom (egest q m) xs
-  | otherwise = case xs of
-    []   -> hom (starve m) []
-    y:ys -> hom (ingest m y) ys
+-- with integer coefficients.
+hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
+hom = coerce go where
+  go :: Integer -> Integer -> Integer -> Integer -> [Integer] -> [Integer]
+  go 1 0 0 1 xs = xs
+  go _ _ 0 0 _  = []
+  go a b c d xs
+    | c /= 0 && d /= 0
+    , q <- quot a c
+    , q == quot b d
+    = q : go c d (a - c*q) (b - d*q) xs
+    | otherwise = case xs of
+      []   -> go a a c c []
+      y:ys -> go (a*y+b) a (c*y+d) c ys
 
 instance Num CF where
-  (+) = gosper 0 1 1 0 1 0 0 0    -- (x + y)/1
-  (-) = gosper 0 1 (-1) 0 1 0 0 0 -- (x - y)/1
-  (*) = gosper 0 0 0 1 1 0 0 0    -- (x * y)/1
-  negate (CF xs)      = CF (map negate xs) -- mobius (-1) 0 0 1
+  (+) = bihom 0 1 1 0 1 0 0 0    -- (x + y)/1
+  (-) = bihom 0 1 (-1) 0 1 0 0 0 -- (x - y)/1
+  (*) = bihom 0 0 0 1 1 0 0 0    -- (x * y)/1
+  negate (CF xs)      = CF (map negate xs) -- hom (-1) 0 0 1
   abs (CF as)         = CF (fmap abs as)
   signum (CF [])      = CF [1]
   signum (CF [0])     = CF [0]
@@ -247,7 +162,7 @@ instance Num CF where
 instance Fractional CF where
   recip (CF (0:as)) = CF as
   recip (CF as) = CF (0:as)
-  (/) = gosper 0 1 0 0 0 0 1 0 -- x / y
+  (/) = bihom 0 1 0 0 0 0 1 0 -- x / y
   fromRational (k :% n) = CF (rat k n)
 
 rat :: Integer -> Integer -> [Integer]
@@ -256,25 +171,54 @@ rat k n = case k `quotRem` n of
   (q, r) -> q : if r == 0 then [] else rat n r
 
 instance Enum CF where
-  succ = mobius 1 1 0 1
-{-
-  succ (CF [])  = CF []
-  succ (CF [0]) = CF [1]
-  succ (CF (0:as))
-    | head as < 0 = 1 - CF (0:map negate as) -- gosper
-    | otherwise = CF (1:as)
-  succ (CF (a:as)) = CF (succ a : as)
--}
-  pred = mobius 1 (-1) 0 1 -- (x-1)/1
-{-
-  pred (CF [])  = CF []
-  pred (CF [0]) = CF [-1]
-  pred (CF (0:as))
-    | head as > 0 = -1 - CF (0:map negate as) -- gosper case
-    | otherwise = CF (-1:as)
-  pred (CF (a:as)) = CF (pred a : as)
--}
+  succ = hom 1 1 0 1
+  pred = hom 1 (-1) 0 1 -- (x-1)/1
   fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
   fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
 
+{-
+class Fractional (Frac a) => HasFrac a where
+  -- | The field of fractions
+  type Frac a :: *
+  embed :: a -> Frac a
+  extract :: Frac a -> (a, a)
+
+instance HasFrac Integer where
+  type Frac Integer = Rational
+  embed = fromInteger
+  extract r = (numerator r, denominator r)
+ 
+instance HasFrac Rational where
+  type Frac Rational = Rational
+  embed = id
+  extract r = (numerator r :% 1, denominator r :% 1)
+
+instance HasFrac CF where
+  type Frac CF = CF
+  embed = id
+  extract r = (r, 1)
+-}
+
+{-
+-- | The representation of a continued fraction is _almost_ unique.
+--
+-- Convert a continued fraction in trailing 1 form.
+--
+-- if e > 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
+-- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1] -- ?
+
+nf :: [Integer] -> [Integer]
+nf [] = []
+nf (a0:as) = case compare a0 0 of
+    LT -> neg a0 as
+    EQ -> 0 : nf as
+    GT -> pos a0 as
+  where
+    neg (-1) [] = [-1]
+    neg an [] = [an+1,-1]
+    neg an (b:bs) = an : neg b bs
+    pos 1 [] = [1]
+    pos an [] = [an-1,1]
+    pos an (b:bs) = an : pos b bs
+-}
