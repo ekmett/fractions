@@ -127,6 +127,7 @@ exp' = CF $ 2:1:k 2 where k n = n:1:1:k (n + 2)
 phi :: CF
 phi = CF ones where ones = 1:ones
 
+-- | Compute a series of convergents, which alternate between optimal conservative approximations above and below to the actual answer, in increasing order by |denominator|, such that given the denominator any rational that lies closer to the real answer must have a larger denominator.
 convergents  :: Fractional a => CF -> [a]
 convergents (CF xs)
   = map (\(Mobius a _ c _) -> fromRational (a :% c))
@@ -217,24 +218,19 @@ egest q (Mobius a b c d) = Mobius c d (a - c*q) (b - d*q)
 -- | homographic / Mobius transformation
 --
 mobius :: Integer -> Integer -> Integer -> Integer -> CF -> CF
-mobius a b c d (CF xs) = CF $ gamma (Mobius a b c d) xs
+mobius a b c d (CF xs) = CF $ hom (Mobius a b c d) xs
 
-{-
-hom :: Mobius 
-hom (Mobius _ _ 0 0) _       = CF []
-hom (Mobius _ _ 0 _) (CF []) = CF []
-hom (Mobius _ _ 
--}
-
-gamma :: Mobius -> [Integer] -> [Integer]
-gamma m@(Mobius a b c d) xs
+hom :: Mobius -> [Integer] -> [Integer]
+hom (Mobius 1 0 0 1) xs = xs
+hom (Mobius _ _ 0 0) _  = []
+hom m@(Mobius a b c d) xs
   | c /= 0 && d /= 0
   , q <- quot a c
-  , q == quot b d = q : gamma (egest q m) xs
-  | c == 0 && d == 0 = []
+  , q == quot b d
+  = q : hom (egest q m) xs
   | otherwise = case xs of
-    []   -> gamma (starve m) []
-    y:ys -> gamma (ingest m y) ys
+    []   -> hom (starve m) []
+    y:ys -> hom (ingest m y) ys
 
 instance Num CF where
   (+) = gosper 0 1 1 0 1 0 0 0    -- (x + y)/1
