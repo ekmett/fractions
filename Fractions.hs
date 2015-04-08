@@ -4,7 +4,7 @@ import Data.Ratio
 import Numeric.Natural
 import GHC.Real
 
--- | The continued fraction:
+-- | The simple continued fraction:
 --
 -- @
 -- [a0;a1,a2,a3,a3..an]
@@ -19,10 +19,12 @@ import GHC.Real
 -- is given by 
 --
 -- @
--- CF True [a0,a1,a2,a3..an]
+-- CF [a0,a1,a2,a3..an]
 -- @
 --
--- Only positive continued fractions can be represented this way.
+-- Coefficients @a1..an@ are all strictly positive. a0 may be 0.
+--
+-- However, only non-negative continued fractions can be represented this way.
 --
 -- Negative continued fractions
 --
@@ -33,10 +35,8 @@ import GHC.Real
 -- are represented by
 --
 -- @
--- CF False [a0,a1,a2,a3..an]
+-- CF [-a0,-a1,-a2,-a3..an]
 -- @
---
--- Coefficients a1..an are all strictly positive. a0 may be 0.
 --
 -- The empty list or termination of a list represents an infinite coefficient.
 --
@@ -44,25 +44,41 @@ import GHC.Real
 -- is done by adding @1 / (a_n + 1/...)@  -- which needs to be 0, which happens
 -- when @a_n@ is infinity.
 --
--- Note +/- 0 compare as equal, but yield different answers under `recip`.
+-- This has the disadvantage of not allowing us to represent negative infinity
+--
+-- This yields the following invariant.
+--
+-- All coefficients are negative or all coefficients are positive, after a possible
+-- leading zero.
+--
+-- This matches the defacto operation of the Mathematica ContinuedFraction[x,n] combinator
+-- which actually disagrees with the MathWorld description of its operation.
 
-data CF = CF Bool [Integer]
+newtype CF = CF { coefs :: [Integer] }
   deriving Show
 
 infinity :: CF
-infinity = CF True []
+infinity = CF []
 
 -- | The representation of a continued fraction is _almost_ unique.
 --
 -- Convert a continued fraction in trailing 1 form.
 --
--- if e /= 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
+-- if e > 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
+-- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1]
 nf :: [Integer] -> [Integer]
 nf [] = []
-nf (a0:as) = go a0 as where
-  go 1 [] = [1]
-  go an [] = [an-1,1]
-  go an (b:bs) = an : go b bs
+nf (a0:as) = case compare a0 0 of
+    LT -> neg a0 as
+    EQ -> 0 : nf as
+    GT -> pos a0 as
+  where
+    neg (-1) [] = [-1]
+    neg an [] = [an+1,-1]
+    neg an (b:bs) = an : neg b bs
+    pos 1 [] = [1]
+    pos an [] = [an-1,1]
+    pos an (b:bs) = an : pos b bs
  
 instance Eq CF where
   as == bs = compare as bs == EQ
@@ -77,19 +93,15 @@ cmp (a:as) (b:bs) = case compare a b of
   GT -> GT
 
 instance Ord CF where
-  compare (CF True as) (CF True bs)   = cmp (nf as) (nf bs)
-  compare (CF False as) (CF False bs) = cmp (nf bs) (nf as)
-  compare (CF p [0]) (CF q [0]) = EQ -- +/- zero == +/- zero
-  compare (CF False _) (CF True _) = LT
-  compare (CF True _) (CF False _) = GT
+  compare (CF as) (CF bs) = cmp (nf as) (nf bs)
 
 -- | Euler's constant.
 exp' :: CF
-exp' = CF True $ 2:1:k 2 where k n = n:1:1:k (n + 2)
+exp' = CF $ 2:1:k 2 where k n = n:1:1:k (n + 2)
 
 -- | The golden ratio, aka, the "most irrational number".
 phi :: CF
-phi = CF True ones where ones = 1:ones
+phi = CF ones where ones = 1:ones
 
 continuants :: Integer -> Integer -> [Integer] -> [Integer]
 continuants a b [] = []
@@ -102,15 +114,10 @@ denominators :: [Integer] -> [Integer]
 denominators = continuants 1 0
 
 convergents  :: Fractional a => CF -> [a]
-convergents (CF p cs)
-  = zipWith (\a b -> fromRational (tweak a:%b))
-            (numerators cs)
-            (denominators cs) where
-  tweak
-    | p         = id
-    | otherwise = negate
-
--- the gcd of the corresponding numerators and denominators are always 1s, so we can use :%
+convergents (CF cs) = zipWith
+  (\a b -> fromRational (a:%b)) 
+  (numerators cs)
+  (denominators cs)
 
 -- | bihomographic transformations
 --
@@ -169,7 +176,7 @@ instance Monoid Mobius where
       (c*e+d*g) (c*f+d*h)
 
 ingest :: Integer -> Mobius -> Mobius
-ingest p (Mobius a b c d) = Mobius (a*p + b) a (d*p + c) c
+ingest p (Mobius a b c d) = Mobius b (b*p + a) d (d*p + c)
 
 starve :: Mobius -> Mobius
 starve (Mobius _ b _ d) = Mobius b b d d
@@ -180,8 +187,7 @@ egest q (Mobius a b c d) = Mobius c d (a - c*q) (b - d*q)
 -- | homographic / Mobius transformation
 --
 mobius :: Integer -> Integer -> Integer -> Integer -> CF -> CF
-mobius a b c d (CF True xs) = CF True $ gamma (Mobius a b c d) xs -- this lies at corners
-mobius a b c d (CF False xs) = CF False $ gamma
+mobius a b c d (CF xs) = CF $ gamma (Mobius a b c d) xs
 
 gamma :: Mobius -> [Integer] -> [Integer]
 gamma m@(Mobius a b c d) xs
@@ -197,31 +203,39 @@ instance Num CF where
   (+) = gosper 0 1 1 0 1 0 0 0    -- (x + y)/1
   (-) = gosper 0 1 (-1) 0 1 0 0 0 -- (x - y)/1
   (*) = gosper 0 0 0 1 1 0 0 0    -- (x * y)/1
-  negate = mobius (-1) 0 0 1
-  abs (CF _ as) = CF True as
-  signum (CF p [0]) = CF p [0]
-  signum (CF p _)   = CF p [1]
-  fromInteger n
-    | n >= 0    = CF True [n]
-    | otherwise = CF False [-n]
+  negate (CF xs)      = CF (map negate xs) -- mobius (-1) 0 0 1
+  abs (CF as)         = CF (fmap abs as)
+  signum (CF [])      = CF [1]
+  signum (CF [0])     = CF [0]
+  signum (CF (0:x:_)) = CF [signum x]
+  signum (CF (x:_))   = CF [signum x]
+  fromInteger n       = CF [n]
 
 instance Fractional CF where
-  recip (CF p (0:as)) = CF p as
-  recip (CF p as) = CF p (0:as)
+  recip (CF (0:as)) = CF as
+  recip (CF as) = CF (0:as)
   (/) = gosper 0 1 0 0 0 0 1 0 -- x / y
-  fromRational (k :% n) = CF (k <= 0) (rat (abs k) n)
+  fromRational (k :% n) = CF (rat k n)
 
 rat :: Integer -> Integer -> [Integer]
-rat k n = case k `divMod` n of
-  (q, r) -> q : if r == 0 then [] else rat n q
+rat k 0 = []
+rat k n = case k `quotRem` n of
+  (q, r) -> q : if r == 0 then [] else rat n r
 
 instance Enum CF where
-  succ = mobius 1 1
-                0 1 -- ad-bc = 1
-  pred = mobius 1 (-1)
-                0 1 -- ad-bc = 1
-  fromEnum (CF True (n:_))  = fromIntegral n
-  fromEnum (CF False (n:_)) = fromIntegral (-n)
-  fromEnum (CF True [])     = maxBound
-  fromEnum (CF False [])    = minBound
+  succ (CF [])  = CF []
+  succ (CF [0]) = CF [1]
+  succ (CF (0:as))
+    | head as < 0 = 1 - CF (0:map negate as) -- gosper
+    | otherwise = CF (1:as)
+  succ (CF (a:as)) = CF (succ a : as)
+  pred (CF [])  = CF []
+  pred (CF [0]) = CF [-1]
+  pred (CF (0:as))
+    | head as > 0 = -1 - CF (0:map negate as) -- gosper
+    | otherwise = CF (-1:as)
+  pred (CF (a:as)) = CF (pred a : as)
+  -- pred = mobius 1 (-1) 0 1 -- (x-1)/1
+  fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
+  fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
