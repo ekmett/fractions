@@ -44,8 +44,6 @@ import GHC.Real
 -- is done by adding @1 / (a_n + 1/...)@  -- which needs to be 0, which happens
 -- when @a_n@ is infinity.
 --
--- This has the disadvantage of not allowing us to represent negative infinity
---
 -- This yields the following invariant.
 --
 -- All coefficients are negative or all coefficients are positive, after a possible
@@ -60,12 +58,14 @@ newtype CF = CF { coefs :: [Integer] }
 infinity :: CF
 infinity = CF []
 
+{-
 -- | The representation of a continued fraction is _almost_ unique.
 --
 -- Convert a continued fraction in trailing 1 form.
 --
 -- if e > 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
--- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1]
+-- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1] -- ?
+
 nf :: [Integer] -> [Integer]
 nf [] = []
 nf (a0:as) = case compare a0 0 of
@@ -79,7 +79,8 @@ nf (a0:as) = case compare a0 0 of
     pos 1 [] = [1]
     pos an [] = [an-1,1]
     pos an (b:bs) = an : pos b bs
- 
+-}
+
 instance Eq CF where
   as == bs = compare as bs == EQ
 
@@ -93,7 +94,7 @@ cmp (a:as) (b:bs) = case compare a b of
   GT -> GT
 
 instance Ord CF where
-  compare (CF as) (CF bs) = cmp (nf as) (nf bs)
+  compare (CF as) (CF bs) = cmp as bs -- (nf as) (nf bs)
 
 -- | Euler's constant.
 exp' :: CF
@@ -162,25 +163,39 @@ gosper a b c d e f g h x y = undefined
 --
 -- with integer coefficients, such that c /= 0.
 data Mobius = Mobius !Integer !Integer !Integer !Integer
+  deriving (Eq,Ord,Show,Read)
+
+digit :: Integer -> Mobius
+digit a = Mobius a 1 1 0
 
 invert :: Mobius -> Mobius
 invert (Mobius a b c d) = Mobius (-d) b c (-a)
 
 instance Monoid Mobius where
-  mempty
-    = Mobius 1 0
-             0 1
+  mempty = Mobius 1 0 0 1
   Mobius a b c d `mappend` Mobius e f g h
     = Mobius
       (a*e+b*g) (a*f+b*h)
       (c*e+d*g) (c*f+d*h)
 
-ingest :: Integer -> Mobius -> Mobius
-ingest p (Mobius a b c d) = Mobius b (b*p + a) d (d*p + c)
+-- |
+-- @
+-- ingest m n = m <> Mobius n 1 1 0
+-- @
+ingest :: Mobius -> Integer -> Mobius
+ingest (Mobius a b c d) p = Mobius (a*p+b) a (c*p+d) c
 
+-- | 
+-- @
+-- starve m = m <> Mobius 1 1 0 0
+-- @
 starve :: Mobius -> Mobius
-starve (Mobius _ b _ d) = Mobius b b d d
+starve (Mobius a _ c _) = Mobius a a c c
 
+-- |
+-- @
+-- egest n m = Mobius 0 1 1 n <> m
+-- @
 egest :: Integer -> Mobius -> Mobius
 egest q (Mobius a b c d) = Mobius c d (a - c*q) (b - d*q)
 
@@ -192,12 +207,12 @@ mobius a b c d (CF xs) = CF $ gamma (Mobius a b c d) xs
 gamma :: Mobius -> [Integer] -> [Integer]
 gamma m@(Mobius a b c d) xs
   | c /= 0 && d /= 0
-  , q <- div a c
-  , q == div b d = q : gamma (egest q m) xs
+  , q <- quot a c
+  , q == quot b d = q : gamma (egest q m) xs
   | c == 0 && d == 0 = []
   | otherwise = case xs of
     []   -> gamma (starve m) []
-    y:ys -> gamma (ingest y m) ys
+    y:ys -> gamma (ingest m y) ys
 
 instance Num CF where
   (+) = gosper 0 1 1 0 1 0 0 0    -- (x + y)/1
@@ -223,19 +238,24 @@ rat k n = case k `quotRem` n of
   (q, r) -> q : if r == 0 then [] else rat n r
 
 instance Enum CF where
+  succ = mobius 1 1 0 1
+{-
   succ (CF [])  = CF []
   succ (CF [0]) = CF [1]
   succ (CF (0:as))
     | head as < 0 = 1 - CF (0:map negate as) -- gosper
     | otherwise = CF (1:as)
   succ (CF (a:as)) = CF (succ a : as)
+-}
+  pred = mobius 1 (-1) 0 1 -- (x-1)/1
+{-
   pred (CF [])  = CF []
   pred (CF [0]) = CF [-1]
   pred (CF (0:as))
-    | head as > 0 = -1 - CF (0:map negate as) -- gosper
+    | head as > 0 = -1 - CF (0:map negate as) -- gosper case
     | otherwise = CF (-1:as)
   pred (CF (a:as)) = CF (pred a : as)
-  -- pred = mobius 1 (-1) 0 1 -- (x-1)/1
+-}
   fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
   fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
