@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies, FlexibleContexts, TypeSynonymInstances, FlexibleInstances #-}
+
 import Data.Function (on)
 import Data.Monoid
 import Data.Ratio
@@ -58,6 +60,27 @@ newtype CF = CF { coefs :: [Integer] }
 infinity :: CF
 infinity = CF []
 
+class Fractional (Frac a) => HasFrac a where
+  -- | The field of fractions
+  type Frac a :: *
+  embed :: a -> Frac a
+  extract :: Frac a -> (a, a)
+
+instance HasFrac Integer where
+  type Frac Integer = Rational
+  embed = fromInteger
+  extract r = (numerator r, denominator r)
+ 
+instance HasFrac Rational where
+  type Frac Rational = Rational
+  embed = id
+  extract r = (numerator r :% 1, denominator r :% 1)
+
+instance HasFrac CF where
+  type Frac CF = CF
+  embed = id
+  extract r = (r, 1)
+
 {-
 -- | The representation of a continued fraction is _almost_ unique.
 --
@@ -104,21 +127,10 @@ exp' = CF $ 2:1:k 2 where k n = n:1:1:k (n + 2)
 phi :: CF
 phi = CF ones where ones = 1:ones
 
-continuants :: Integer -> Integer -> [Integer] -> [Integer]
-continuants a b [] = []
-continuants a b (c:cs) = d : continuants b d cs where d = a + b*c
-
-numerators :: [Integer] -> [Integer]
-numerators = continuants 0 1
-
-denominators :: [Integer] -> [Integer]
-denominators = continuants 1 0
-
 convergents  :: Fractional a => CF -> [a]
-convergents (CF cs) = zipWith
-  (\a b -> fromRational (a:%b)) 
-  (numerators cs)
-  (denominators cs)
+convergents (CF xs)
+  = map (\(Mobius a _ c _) -> fromRational (a :% c))
+  $ tail $ scanl ingest (Mobius 1 0 0 1) xs
 
 -- | bihomographic transformations
 --
@@ -162,8 +174,11 @@ gosper a b c d e f g h x y = undefined
 -- @
 --
 -- with integer coefficients, such that c /= 0.
-data Mobius = Mobius !Integer !Integer !Integer !Integer
+data Mobius = Mobius Integer Integer Integer Integer
   deriving (Eq,Ord,Show,Read)
+
+det :: Mobius -> Integer
+det (Mobius a b c d) = a*d - b*c
 
 digit :: Integer -> Mobius
 digit a = Mobius a 1 1 0
@@ -203,6 +218,13 @@ egest q (Mobius a b c d) = Mobius c d (a - c*q) (b - d*q)
 --
 mobius :: Integer -> Integer -> Integer -> Integer -> CF -> CF
 mobius a b c d (CF xs) = CF $ gamma (Mobius a b c d) xs
+
+{-
+hom :: Mobius 
+hom (Mobius _ _ 0 0) _       = CF []
+hom (Mobius _ _ 0 _) (CF []) = CF []
+hom (Mobius _ _ 
+-}
 
 gamma :: Mobius -> [Integer] -> [Integer]
 gamma m@(Mobius a b c d) xs
@@ -259,3 +281,4 @@ instance Enum CF where
   fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
   fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
+
