@@ -90,8 +90,6 @@ convergents (CF xs0) = go 1 0 0 1 xs0 where
   go a b c d (y:ys) = fromRational (e :% f) : go e a f c ys
     where e = a*y+b; f = c*y+d
 
--- = map (\(Mobius a _ c _) -> fromRational (a :% c)) $ tail $ scanl ingest (Mobius 1 0 0 1) xs
-
 -- | Gosper-style bihomographic transformations
 --
 -- @
@@ -100,28 +98,25 @@ convergents (CF xs0) = go 1 0 0 1 xs0 where
 --     exy + fx + gy + h
 -- @
 bihom :: Integer -> Integer -> Integer -> Integer
-      -> Integer -> Integer -> Integer -> Integer
-      -> CF -> CF -> CF
+      -> Integer -> Integer -> Integer -> Integer -> CF -> CF -> CF
 bihom = coerce go where
   go :: Integer -> Integer -> Integer -> Integer
-     -> Integer -> Integer -> Integer -> Integer
-     -> [Integer] -> [Integer] -> [Integer]
+     -> Integer -> Integer -> Integer -> Integer -> [Integer] -> [Integer] -> [Integer]
   go a b _ _ e f _ _ xs [] = coefs $ hom a b e f (CF xs)
   go a _ c _ e _ g _ [] ys = coefs $ hom a c e g (CF ys)
   go 0 1 0 0 0 0 0 1 xs _  = xs
   go 0 0 1 0 0 0 0 1 _  ys = ys
   go a b c d e f g h xs@(x:xs') ys@(y:ys')
      | e /= 0, f /= 0, g /= 0, h /= 0 
-     , q == bf, q == cg, q == dh
+     , q <- quot a e, q == quot b f
+     , q == quot c g, q == quot d h
      = q : go e f g h (a-q*e) (b-q*f) (c-q*g) (d-q*h) xs ys
      -- TODO: finish this selection logic correctly
-     | f /= 0, g /= 0, h /= 0, abs (bf - dh) > abs (cg - dh) =
-       go (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g xs' ys
-     | otherwise = go (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f xs ys'
-     where q  = quot a e
-           bf = quot b f
-           cg = quot c g
-           dh = quot d h
+     | e /= 0 || f /= 0
+     , (e == 0 && g == 0) || abs (g*e*b - g*a*f) > abs (f*e*c - g*a*f)
+       = go (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g xs' ys
+     | otherwise
+       = go (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f xs ys'
 
 -- | 
 -- @
