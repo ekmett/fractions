@@ -73,7 +73,8 @@ cmp (a:as) (b:bs) = case compare a b of
   GT -> GT
 
 instance Ord CF where
-  compare (CF as) (CF bs) = cmp as bs -- (nf as) (nf bs)
+  -- TODO: normalize
+  compare (CF as) (CF bs) = cmp as bs
 
 -- | Euler's constant.
 exp' :: CF
@@ -97,6 +98,8 @@ convergents (CF xs0) = go 1 0 0 1 xs0 where
 --     -----------------
 --     exy + fx + gy + h
 -- @
+--
+-- TODO: detect cycles
 bihom :: Integer -> Integer -> Integer -> Integer
       -> Integer -> Integer -> Integer -> Integer -> CF -> CF -> CF
 bihom = coerce go where
@@ -111,12 +114,11 @@ bihom = coerce go where
      , q <- quot a e, q == quot b f
      , q == quot c g, q == quot d h
      = q : go e f g h (a-q*e) (b-q*f) (c-q*g) (d-q*h) xs ys
-     -- TODO: finish this selection logic correctly
      | e /= 0 || f /= 0
      , (e == 0 && g == 0) || abs (g*e*b - g*a*f) > abs (f*e*c - g*a*f)
-       = go (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g xs' ys
+     = go (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g xs' ys
      | otherwise
-       = go (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f xs ys'
+     = go (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f xs ys'
 
 -- | 
 -- @
@@ -132,6 +134,8 @@ bihom = coerce go where
 -- @
 --
 -- with integer coefficients.
+--
+-- TODO: detect cycles
 hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
 hom = coerce go where
   go :: Integer -> Integer -> Integer -> Integer -> [Integer] -> [Integer]
@@ -139,8 +143,7 @@ hom = coerce go where
   go _ _ 0 0 _  = []
   go a b c d xs
     | c /= 0, d /= 0
-    , q <- quot a c
-    , q == quot b d
+    , q <- quot a c, q == quot b d
     = q : go c d (a - c*q) (b - d*q) xs
     | otherwise = case xs of
       []   -> go a a c c []
@@ -172,6 +175,6 @@ rat k n = case k `quotRem` n of
 instance Enum CF where
   succ = hom 1 1 0 1    -- (x+1)/1
   pred = hom 1 (-1) 0 1 -- (x-1)/1
-  fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
+  fromEnum (CF (n:_)) = fromIntegral n
   fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
