@@ -1,10 +1,7 @@
-{-# LANGUAGE TypeFamilies, FlexibleContexts, TypeSynonymInstances, FlexibleInstances #-}
-
 import Data.Coerce
 import Data.Function (on)
 import Data.Ratio
-import Numeric.Natural
-import GHC.Real
+import GHC.Real (Ratio(..))
 
 -- | The (lazy) continued fraction:
 --
