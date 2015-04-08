@@ -132,7 +132,8 @@ bihom = coerce go where
 --
 -- with integer coefficients.
 --
--- TODO: detect cycles
+-- TODO: detect cycles, once we do, detect cycle length, then our position in it
+-- this will let us detect the length of the cycle we emit.
 hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
 hom = coerce go where
   go :: Integer -> Integer -> Integer -> Integer -> [Integer] -> [Integer]
@@ -145,6 +146,15 @@ hom = coerce go where
     | otherwise = case xs of
       []   -> go a a c c []
       y:ys -> go (a*y+b) a (c*y+d) c ys
+
+-- | Brent's teleporting turtle
+brent :: Eq a => [a] -> Bool
+brent [] = False
+brent (x:xs) = go 1 2 x xs where
+  go k n t [] = False
+  go k n t (r:rs) = r == t || if k == n
+    then go 1 (n * 2) r rs
+    else go (k + 1) n t rs
 
 instance Num CF where
   (+) = bihom 0 1 1 0 0 0 0 1    -- (x+y)/1
