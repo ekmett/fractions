@@ -6,7 +6,7 @@ import Data.Ratio
 import Numeric.Natural
 import GHC.Real
 
--- | The simple continued fraction:
+-- | The (lazy) continued fraction:
 --
 -- @
 -- [a0;a1,a2,a3,a3..an]
@@ -51,7 +51,7 @@ import GHC.Real
 -- All coefficients are negative or all coefficients are positive, after a possible
 -- leading zero.
 --
--- This matches the defacto operation of the Mathematica ContinuedFraction[x,n] combinator
+-- This matches the defacto operation of the Mathematica ContinuedFraction[x,n] combinator,
 -- which actually disagrees with the MathWorld description of its operation.
 
 newtype CF = CF { coefs :: [Integer] }
@@ -92,7 +92,7 @@ convergents (CF xs0) = go 1 0 0 1 xs0 where
 
 -- = map (\(Mobius a _ c _) -> fromRational (a :% c)) $ tail $ scanl ingest (Mobius 1 0 0 1) xs
 
--- | bihomographic transformations
+-- | Gosper-style bihomographic transformations
 --
 -- @
 -- z = axy + bx + cy + d
@@ -106,18 +106,22 @@ bihom = coerce go where
   go :: Integer -> Integer -> Integer -> Integer
      -> Integer -> Integer -> Integer -> Integer
      -> [Integer] -> [Integer] -> [Integer]
-  go a b c d e f g h x y = undefined
-  -- TODO:
-
-  -- with a<->d = e<->h order
-  -- ingestX a b c d e f g h p k = k (c + a*p) (d + b*p) a b (g + e*p) (h + f*p) e f
-  -- ingestY a b c d e f g h p k = k (b + a*p) a (d + c*p) c (f + e*p) e (h + g*p) g
-  -- ingestXfail a b c d e f g h k = k a b a b e f e f
-  -- ingestYfail a b c d e f g h k = k a a c c e e g g 
-  -- egest a b c d e f g h q k = k e f g h (a - q*e) (b - q*f) (c - q*g) (d - q*h)
-  --
-  -- ask if a/e, b/f, c/g, d/h all agree on the next term z, if so egest it
-  -- Otherwise, read input from x if |b/f - a/e| > |c/g - a/e| or y otherwise.
+  go a b _ _ e f _ _ xs [] = coefs $ hom a b e f (CF xs)
+  go a _ c _ e _ g _ [] ys = coefs $ hom a c e g (CF ys)
+  go 0 1 0 0 0 0 0 1 xs _  = xs
+  go 0 0 1 0 0 0 0 1 _  ys = ys
+  go a b c d e f g h xs@(x:xs') ys@(y:ys')
+     | e /= 0, f /= 0, g /= 0, h /= 0 
+     , q == bf, q == cg, q == dh
+     = q : go e f g h (a-q*e) (b-q*f) (c-q*g) (d-q*h) xs ys
+     -- TODO: finish this selection logic correctly
+     | f /= 0, g /= 0, h /= 0, abs (bf - dh) > abs (cg - dh) =
+       go (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g xs' ys
+     | otherwise = go (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f xs ys'
+     where q  = quot a e
+           bf = quot b f
+           cg = quot c g
+           dh = quot d h
 
 -- | 
 -- @
@@ -139,7 +143,7 @@ hom = coerce go where
   go 1 0 0 1 xs = xs
   go _ _ 0 0 _  = []
   go a b c d xs
-    | c /= 0 && d /= 0
+    | c /= 0, d /= 0
     , q <- quot a c
     , q == quot b d
     = q : go c d (a - c*q) (b - d*q) xs
@@ -148,11 +152,11 @@ hom = coerce go where
       y:ys -> go (a*y+b) a (c*y+d) c ys
 
 instance Num CF where
-  (+) = bihom 0 1 1 0 1 0 0 0    -- (x + y)/1
-  (-) = bihom 0 1 (-1) 0 1 0 0 0 -- (x - y)/1
-  (*) = bihom 0 0 0 1 1 0 0 0    -- (x * y)/1
-  negate (CF xs)      = CF (map negate xs) -- hom (-1) 0 0 1
-  abs (CF as)         = CF (fmap abs as)
+  (+) = bihom 0 1 1 0 0 0 0 1    -- (x+y)/1
+  (-) = bihom 0 1 (-1) 0 0 0 0 1 -- (x-y)/1
+  (*) = bihom 1 0 0 0 0 0 0 1    -- (x*y)/1
+  negate (CF xs)      = CF (map negate xs)
+  abs (CF as)         = CF (map abs as)
   signum (CF [])      = CF [1]
   signum (CF [0])     = CF [0]
   signum (CF (0:x:_)) = CF [signum x]
@@ -171,54 +175,8 @@ rat k n = case k `quotRem` n of
   (q, r) -> q : if r == 0 then [] else rat n r
 
 instance Enum CF where
-  succ = hom 1 1 0 1
+  succ = hom 1 1 0 1    -- (x+1)/1
   pred = hom 1 (-1) 0 1 -- (x-1)/1
   fromEnum (CF (n:_)) = fromIntegral n -- pushes toward zero, should truncate toward -inf
   fromEnum (CF [])    = maxBound
   toEnum = fromIntegral
-
-{-
-class Fractional (Frac a) => HasFrac a where
-  -- | The field of fractions
-  type Frac a :: *
-  embed :: a -> Frac a
-  extract :: Frac a -> (a, a)
-
-instance HasFrac Integer where
-  type Frac Integer = Rational
-  embed = fromInteger
-  extract r = (numerator r, denominator r)
- 
-instance HasFrac Rational where
-  type Frac Rational = Rational
-  embed = id
-  extract r = (numerator r :% 1, denominator r :% 1)
-
-instance HasFrac CF where
-  type Frac CF = CF
-  embed = id
-  extract r = (r, 1)
--}
-
-{-
--- | The representation of a continued fraction is _almost_ unique.
---
--- Convert a continued fraction in trailing 1 form.
---
--- if e > 1 then [a,b,c,d,e] == [a,b,c,d,e-1,1]
--- if e < -1 then [a,b,c,d,e] == [a,b,c,d,e+1,-1] -- ?
-
-nf :: [Integer] -> [Integer]
-nf [] = []
-nf (a0:as) = case compare a0 0 of
-    LT -> neg a0 as
-    EQ -> 0 : nf as
-    GT -> pos a0 as
-  where
-    neg (-1) [] = [-1]
-    neg an [] = [an+1,-1]
-    neg an (b:bs) = an : neg b bs
-    pos 1 [] = [1]
-    pos an [] = [an-1,1]
-    pos an (b:bs) = an : pos b bs
--}
