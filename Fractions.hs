@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiWayIf #-}
 -- import Data.Coerce
 -- import Data.Function (on)
 -- import Data.Ratio
@@ -67,6 +68,14 @@ next :: [Integer] -> Step [Integer]
 next (a:as) = Step a as
 next []     = Stop
 
+steps :: Int -> (s -> Step s) -> s -> [Integer] 
+steps n f s0 = go n s0 where
+  go 0 _ = []
+  go k s = case f s of
+    Stop -> []
+    Skip s' -> go (k-1) s'
+    Step r s' -> r : go (k-1) s'
+
 data Periodic 
   = Cold (Cyc Integer)
   | Hot {-# UNPACK #-} !Int [Integer] !Integer [Integer]
@@ -76,8 +85,8 @@ cf as = CF eq step (Cold as) where
   eq (Cold _)    = const False
   eq (Hot n _ _ _) = \(Hot m _ _ _) -> n == m
   step (Cold (b :+ bs))    = Step b (Cold bs)
-  step (Cold (Cyc (b:bs))) = Step b (Hot 0 bs b bs)
-  step (Cold (Cyc []))     = Stop
+  step (Cold (Cyc n (b:bs))) = Step b (Hot 0 bs b bs)
+  step (Cold (Cyc _ []))     = Stop
   step (Hot n (b:bs) c cs) = Step b (Hot (n+1) bs c cs)
   step (Hot _ [] b bs)     = Step b (Hot 0 bs b bs)
 
@@ -85,35 +94,58 @@ infixr 5 :+
 
 data Cyc a
   = a :+ Cyc a -- a + 1 / ...
-  | Cyc [a]    -- a cyclic list
+  | Cyc {-# UNPACK #-} !Int [a]    -- a cyclic list
+
+cyc :: [a] -> Cyc a
+cyc xs = Cyc (length xs) xs
+
 
 instance Show a => Show (Cyc a) where
   showsPrec d (a :+ as) = showParen (d > 5) $
     showsPrec 6 a . showString " :+ " . showsPrec 5 as
-  showsPrec d (Cyc as) = showParen (d > 10) $ 
-    showString "Cyc " . showsPrec 11 as
+  showsPrec d (Cyc n as) = showParen (d > 10) $ 
+    showString "Cyc " . showsPrec 11 n . showChar ' ' . showsPrec 11 as
 
 -- | Explicitly detect periodicity with brent's teleporting tortoise
 --
 -- Produces a finite cycle for quadratic irrationals.
 brent :: CF -> Cyc Integer
-brent (CF p f s0) = go (1 :: Integer) 2 (p s0) s0 where
-  go k n t s = case f s of
-    Stop -> Cyc []
-    Skip s' 
-      | t s       -> Cyc (til n t s')
-      | k == n    -> go 1 (n*2) (p s') s'
+brent (CF p f s0) = case f s0 of
+    Stop -> Cyc 0 []
+    Skip s -> go 1 1 (p s0) s
+    Step r s -> r :+ go 1 1 (p s0) s
+  where
+    go k n t s
+      | t s = Cyc k (steps k f s) -- k counts skips, its high
+      | k == n = step 0 (n*2) (p s) s
+      | otherwise = step k n t s
+    step k n t s = case f s of
+      Stop -> Cyc 0 []
+      Skip s' -> go (k+1) n t s'
+      Step r s' -> r :+ go (k+1) n t s'
+    
+{-
+    -- | t s = Cyc k (til0 k t s) -- k counts skips, its high
+    | otherwise = case f s of
+    Stop -> Cyc 0 []
+    Skip s'  -- hey, we've been here before, so we'll get back
+      | k == n    -> go 0 (n*2) (p s) s'
       | otherwise -> go (k+1) n t s'
-    Step r s' -> r :+ if t s
-      then Cyc (til n t s)
-      else if k == n
-      then go 1 (n*2) (p s') s'
-      else go (k+1) n t s'
-  til 0 _ _ = []
-  til n t s = case f s of
-    Step r s' -> r : if t s then [] else til (n - 1) t s'
-    Skip s'   -> if t s then [] else til (n - 1) t s'
-    Stop      -> []
+    Step r s' -> if 
+      | k == n    -> r :+ go 0 (n*2) (p s) s'
+      | otherwise -> r :+ go (k+1) n t s'
+-}
+
+{-
+  til0 n t s = case f s of
+    Stop -> []
+    Skip s'   -> til (n-1) t s'
+    Step r s' -> r : til (n-1) t s'
+  til n t s 
+    | t s = [] 
+    | n == 0 = [] 
+    | otherwise = til0 n t s
+-}
 
 coefs :: CF -> [Integer]
 coefs (CF _ f s0) = go s0 where
@@ -131,6 +163,12 @@ aperiodic = CF (\_ _ -> False) next
 -- | Euler's constant.
 exp' :: CF
 exp' = aperiodic $ 2:1:k 2 where k n = n:1:1:k (n + 2)
+
+sqrt2 :: CF
+sqrt2 = cf (1 :+ Cyc 1 [2])
+
+sqrt7 :: CF
+sqrt7 = cf (2 :+ Cyc 4 [1,1,1,4])
 
 -- | The golden ratio, aka, the "most irrational number".
 phi :: CF
@@ -193,11 +231,12 @@ convergents (CF _ f s0) = go 1 0 0 1 s0 where
 data Hom s = Hom !Integer !Integer !Integer !Integer (Maybe s)
 
 hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
-hom a0 b0 c0 d0 (CF eq0 step0 s0) = CF eq (\(Hom a b c d s) -> stepHom step0 a b c d s) (Hom a0 b0 c0 d0 (Just s0)) where
+hom a0 b0 c0 d0 (CF eq0 step0 s0) = CF eq step (Hom a0 b0 c0 d0 (Just s0)) where
   eq (Hom _ _ _ _ Nothing) = const False
   eq (Hom a b c d (Just s)) = let p = eq0 s in \xs -> case xs of
     Hom a' b' c' d' (Just s') -> a == a' && b == b' && c == c' && d == d' && p s'
     _ -> False
+  step (Hom a b c d s) = stepHom step0 a b c d s
 
 stepHom
   :: (s -> Step s)
@@ -227,8 +266,6 @@ data Bihom s t
 --     -----------------
 --     exy + fx + gy + h
 -- @
---
--- TODO: detect cycles
 bihom :: Integer -> Integer -> Integer -> Integer
       -> Integer -> Integer -> Integer -> Integer
       -> CF -> CF -> CF
@@ -240,7 +277,7 @@ bihom a0 b0 c0 d0 e0 f0 g0 h0 (CF eq1 step1 s1) (CF eq2 step2 s2)
   meq _ _ _ = False
 
   -- we'll never repeat if we're rational
-  eq (Bihom _ _ _ _ _ _ _ _ Nothing Nothing) = \_ -> False
+  --eq (Bihom _ _ _ _ _ _ _ _ Nothing Nothing) = \_ -> False
 
   -- were in the Hom case
   eq (Bihom a b _ _ e f _ _ ms Nothing) = 
@@ -251,6 +288,12 @@ bihom a0 b0 c0 d0 e0 f0 g0 h0 (CF eq1 step1 s1) (CF eq2 step2 s2)
     \(Bihom a' _ c' _ e' _ g' _ _ mt')
     -> a == a' && c == c' && e == e' && g == g' && meq eq2 mt mt'
 
+  eq (Bihom a b c d e f g h ms mt) = \(Bihom a' b' c' d' e' f' g' h' ms' mt')
+    -> a == a' && b == b' && c == c' && d == d'
+    && e == e' && f == f' && g == g' && h == h'
+    && meq eq1 ms ms' && meq eq2 mt mt'
+
+{-
   eq (Bihom a b c d e f g h (Just s) (Just t)) = \(Bihom a' b' c' d' e' f' g' h' ms' mt')
     -> a == a' && b == b' && c == c' && d == d'
     && e == e' && f == f' && g == g' && h == h'
@@ -259,51 +302,55 @@ bihom a0 b0 c0 d0 e0 f0 g0 h0 (CF eq1 step1 s1) (CF eq2 step2 s2)
         Just t' -> eq2 t t'
         _ -> False
       _ -> False
+-}
 
   step (Bihom a b _ _ e f _ _ ms Nothing) = case stepHom step1 a b e f ms of
     Stop -> Stop
     Skip (Hom a' b' e' f' ms') -> Skip (Bihom a' b' 0 0 e' f' 0 0 ms' Nothing)
     Step q (Hom a' b' e' f' ms') -> Step q (Bihom a' b' 0 0 e' f' 0 0 ms' Nothing)
+
   step (Bihom a _ c _ e _ g _ Nothing mt) = case stepHom step2 a c e g mt of
     Stop -> Stop
     Skip (Hom a' c' e' g' mt') -> Skip (Bihom a' 0 c' 0 e' 0 g' 0 Nothing mt')
     Step q (Hom a' c' e' g' mt') -> Step q (Bihom a' 0 c' 0 e' 0 g' 0 Nothing mt')
-  step (Bihom a b c d e f g h ms@(Just s) mt@(Just t))
+
+  step (Bihom a b c d e f g h ms mt)
    | e /= 0, f /= 0, g /= 0, h /= 0 
    , q <- quot a e, q == quot b f
    , q == quot c g, q == quot d h
    = Step q (Bihom e f g h (a-q*e) (b-q*f) (c-q*g) (d-q*h) ms mt)
+
+  step (Bihom a b c d e f g h ms@(Just s) mt@(Just t))
    | e /= 0 || f /= 0
    , (e == 0 && g == 0) || abs (g*e*b - g*a*f) > abs (f*e*c - g*a*f)
    = case step1 s of 
      Step x s' -> Skip (Bihom (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g (Just s') mt)
-     Skip s' -> Skip (Bihom a b c d e f g h (Just s') mt)
-     Stop    -> Skip (Bihom a b c d e f g h Nothing mt)
+     Skip s'   -> Skip (Bihom a b c d e f g h (Just s') mt)
+     Stop      -> Skip (Bihom a b c d e f g h Nothing mt)
    | otherwise = case step2 t of
      Step y t' -> Skip (Bihom (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f ms (Just t'))
-     Skip t' -> Skip (Bihom a b c d e f g h ms (Just t'))
-     Stop    -> Skip (Bihom a b c d e f g h ms Nothing)
+     Skip t'   -> Skip (Bihom a b c d e f g h ms (Just t'))
+     Stop      -> Skip (Bihom a b c d e f g h ms Nothing)
+
+mapCF :: (Integer -> Integer) -> CF -> CF
+mapCF g (CF p f s0) = CF p f' s0 where
+  f' s = case f s of
+    Step a s' -> Step (g a) s'
+    Skip s' -> Skip s'
+    Stop -> Stop
 
 instance Num CF where
   (+) = bihom
-    0 1 1 0
-    0 0 0 1    -- (x+y)/1
+    0 1 1 0 -- x + y
+    0 0 0 1 -- 1
   (-) = bihom
-    0 1 (-1) 0
-    0 0 0    1 -- (x-y)/1
+    0 1 (-1) 0 -- x - y
+    0 0 0    1 -- 1
   (*) = bihom
-    1 0 0 0
-    0 0 0 1    -- (x*y)/1
-  negate (CF p f s0) = CF p f' s0 where
-    f' s = case f s of
-      Step a s' -> Step (negate a) s'
-      Skip s' -> Skip s'
-      Stop -> Stop
-  abs (CF p f s0) = CF p f' s0 where
-    f' s = case f s of
-      Step a s' -> Step (abs a) s'
-      Skip s' -> Skip s'
-      Stop -> Stop
+    1 0 0 0 -- xy
+    0 0 0 1 -- 1
+  negate = mapCF negate
+  abs = mapCF abs
   signum (CF _ f s0) = CF (\_ _ -> False) step (SignumStart s0) where
     step (SignumStart s) = case f s of
       Step 0 s' -> Skip (SignumZero s')
@@ -315,30 +362,29 @@ instance Num CF where
       Skip s'  -> Skip (SignumZero s')
       Stop     -> Step 0 SignumDone
     step SignumDone = Stop
-  fromInteger n = CF (\_ _ -> False) next [n] where
+  fromInteger n = aperiodic [n]
 
 data Signum s = SignumStart s | SignumZero s | SignumDone
 
-{-
-
 instance Fractional CF where
-  recip (CF (0:as)) = CF as
-  recip (CF as) = CF (0:as)
+  recip = hom 0 1 1 0 -- todo exploit the more efficient put on / take off 0 representation
   (/) = bihom
-     0 1 0 0
-     0 0 1 0 -- x/y
-  fromRational (k0 :% n0) = CF (go k0 n0) where
+     0 1 0 0 -- x
+     0 0 1 0 -- y
+  fromRational (k0 :% n0) = aperiodic (go k0 n0) where
     go k 0 = []
     go k n = case k `quotRem` n of
       (q, r) -> q : if r == 0
         then []
         else go n r
 
--}
-
 instance Enum CF where
-  succ = hom 1 1 0 1    -- (x+1)/1
-  pred = hom 1 (-1) 0 1 -- (x-1)/1
+  succ = hom
+    1 1 -- x + 1
+    0 1 -- 1
+  pred = hom
+    1 (-1) -- x - 1
+    0 1    -- 1
   fromEnum (CF _ f s0) = go s0 where
     go s = case f s of
       Step n _ -> fromIntegral n
