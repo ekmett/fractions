@@ -262,9 +262,9 @@ data Bihom s t
 -- | Gosper-style bihomographic transformations
 --
 -- @
--- z = axy + bx + cy + d
+-- z = axy + by + cx + d
 --     -----------------
---     exy + fx + gy + h
+--     exy + fy + gx + h
 -- @
 bihom :: Integer -> Integer -> Integer -> Integer
       -> Integer -> Integer -> Integer -> Integer
@@ -344,8 +344,8 @@ instance Num CF where
     0 1 1 0 -- x + y
     0 0 0 1 -- 1
   (-) = bihom
-    0 1 (-1) 0 -- x - y
-    0 0 0    1 -- 1
+    0 (-1) 1 0 -- x - y
+    0 0    0 1 -- 1
   (*) = bihom
     1 0 0 0 -- xy
     0 0 0 1 -- 1
@@ -369,8 +369,8 @@ data Signum s = SignumStart s | SignumZero s | SignumDone
 instance Fractional CF where
   recip = hom 0 1 1 0 -- todo exploit the more efficient put on / take off 0 representation
   (/) = bihom
-     0 1 0 0 -- x
-     0 0 1 0 -- y
+     0 0 1 0 -- x
+     0 1 0 0 -- y
   fromRational (k0 :% n0) = aperiodic (go k0 n0) where
     go k 0 = []
     go k n = case k `quotRem` n of
