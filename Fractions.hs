@@ -4,6 +4,7 @@
 -- import Data.Function (on)
 -- import Data.Ratio
 import GHC.Real (Ratio(..))
+import GHC.Integer.GMP.Internals (gcdInteger)
 
 -- | The (lazy) continued fraction:
 --
@@ -233,9 +234,20 @@ data Hom s = Hom !Integer !Integer !Integer !Integer (Maybe s)
 hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
 hom a0 b0 c0 d0 (CF eq0 step0 s0) = CF eq step (Hom a0 b0 c0 d0 (Just s0)) where
   eq (Hom _ _ _ _ Nothing) = const False
-  eq (Hom a b c d (Just s)) = let p = eq0 s in \xs -> case xs of
-    Hom a' b' c' d' (Just s') -> a == a' && b == b' && c == c' && d == d' && p s'
-    _ -> False
+  eq (Hom a b c d (Just s)) = \xs -> case xs of
+      Hom a' b' c' d' (Just s') -> case a `quotRem` am of
+        (q,0) -> bm*q == b' && cm*q == c' && dm*q == d' && p s'
+        _ -> False
+      _ -> False
+    where 
+      p = eq0 s
+      -- compute the gcd
+      m = a `gcdInteger` b `gcdInteger` c `gcdInteger` d
+      am = quot a m
+      bm = quot b m
+      cm = quot c m
+      dm = quot d m
+
   step (Hom a b c d s) = stepHom step0 a b c d s
 
 stepHom
@@ -276,10 +288,12 @@ bihom a0 b0 c0 d0 e0 f0 g0 h0 (CF eq1 step1 s1) (CF eq2 step2 s2)
   meq _ Nothing Nothing = True
   meq _ _ _ = False
 
-  -- we'll never repeat if we're rational
-  --eq (Bihom _ _ _ _ _ _ _ _ Nothing Nothing) = \_ -> False
+  -- eq (Bihom _ _ _ _ _ _ _ _ Nothing Nothing) = \_ -> False
 
   -- were in the Hom case
+
+  -- TODO: copy the gcd improvements from hom
+  -- TODO: check to see if these are inverted
   eq (Bihom a b _ _ e f _ _ ms Nothing) = 
     \(Bihom a' b' _ _ e' f' _ _ ms' _)
     -> a == a' && b == b' && e == e' && f == f' && meq eq1 ms ms'
