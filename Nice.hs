@@ -95,8 +95,6 @@ instance IntegralDomain a => Num (P a) where
 -- * Extended Rationals
 --------------------------------------------------------------------------------
 
-infixl 7 :/
-
 -- | Extended, unreduced, field of fractions
 -- 
 -- @
@@ -104,49 +102,49 @@ infixl 7 :/
 -- @
 --
 -- @
--- ⊥ = 0 :/ 0
--- ∞ = a :/ 1, a /= 0
+-- ⊥ = Q 0 0
+-- ∞ = Q a 0, a /= 0
 -- @
-data Q a = a :/ a  
+data Q a = Q a a  
   deriving (Show, Functor)
 
 mediant :: Num a => Q a -> Q a -> Q a
-mediant (a :/ b) (c :/ d) = (a + c) :/ (b + d)
+mediant (Q a b) (Q c d) = Q (a + c) (b + d)
 
 indeterminate :: IntegralDomain a => Q a -> Bool
-indeterminate (a :/ b) = isZero a && isZero b
+indeterminate (Q a b) = isZero a && isZero b
 
 infinite :: IntegralDomain a => Q a -> Bool
-infinite (a :/ b) = not (isZero a) && isZero b
+infinite (Q a b) = not (isZero a) && isZero b
 
 instance (Num a, Eq a) => Eq (Q a) where
-  (a :/ b) == (c :/ d) = a * d == b * c
+  Q a b == Q c d = a * d == b * c
 
 instance (Num a, Ord a) => Ord (Q a) where
-  compare (a :/ b) (c :/ d) = compare (a * d) (b * c)
+  compare (Q a b) (Q c d) = compare (a * d) (b * c)
 
 instance Num a => Num (Q a) where
-  a :/ b + c :/ d = (a*d+b*c) :/ (b*d)
-  a :/ b - c :/ d = (a*d-b*c) :/ (b*d)
-  (a :/ b) * (c :/ d) = (a*c) :/ (b*d)
+  Q a b + Q c d = Q (a*d+b*c) (b*d)
+  Q a b - Q c d = Q (a*d-b*c) (b*d)
+  Q a b * Q c d = Q (a*c) (b*d)
   abs xs = signum xs * xs
-  signum (a :/ b) = signum a :/ signum b
-  fromInteger n = fromInteger n :/ 1
+  signum = fmap signum
+  fromInteger n = Q (fromInteger n) 1
 
 instance Num a => Fractional (Q a) where
-  recip (a :/ b) = b :/ a
-  (a :/ b) / (c :/ d) = (a*d) :/ (b*c)
-  fromRational r = fromInteger (numerator r) :/ fromInteger (denominator r)
+  recip (Q a b) = Q b a
+  Q a b / Q c d = Q (a*d) (b*c)
+  fromRational r = Q (fromInteger (numerator r)) (fromInteger (denominator r))
 
 instance Integral a => Real (Q a) where
-  toRational (k :/ n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
+  toRational (Q k n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
 
 instance Integral a => RealFrac (Q a) where
-  properFraction (a :/ b) = case divMod a b of
-    (q, r) -> (fromIntegral q, r :/ b)
+  properFraction (Q a b) = case divMod a b of
+    (q, r) -> (fromIntegral q, Q r b)
 
 instance IntegralDomain a => IntegralDomain (Q a) where
-  isZero (a :/ b) = isZero a && not (isZero b)
+  isZero (Q a b) = isZero a && not (isZero b)
 
 --------------------------------------------------------------------------------
 -- * Mobius Transformations
@@ -167,7 +165,7 @@ inv :: Num a => M a -> M a
 inv (M a b c d) = M (negate d) b c (negate a)
 
 mq :: Num a => M a -> Q a -> Q a
-mq (M a b c d) (e :/ f) = (a*e+b*f) :/ (c*e+d*f)
+mq (M a b c d) (Q e f) = Q (a*e+b*f) (c*e+d*f)
 
 -- |
 -- @
@@ -175,8 +173,8 @@ mq (M a b c d) (e :/ f) = (a*e+b*f) :/ (c*e+d*f)
 -- @
 bounds :: (Num a, Ord a) => M a -> (Q a, Q a)
 bounds (M a b c d)
-  | a*d > b*c = (b :/ d, a :/ c)
-  | otherwise = (a :/ c, b :/ d)
+  | a*d > b*c = (Q b d, Q a c)
+  | otherwise = (Q a c, Q b d)
 
 
 -- | much tighter bounds assuming we derive from a digits of a continued fraction
@@ -186,11 +184,11 @@ bounds (M a b c d)
 -- @
 cfbounds :: (Num a, Ord a) => M a -> (Q a, Q a)
 cfbounds (M a b c d)
-  | a*d > b*c = (m, a :/ c)
-  | otherwise = (a :/ c, m)
+  | a*d > b*c = (m, Q a c)
+  | otherwise = (Q a c, m)
   where
-    m | c * d >= 0 = (a+b):/(c+d) -- we agree on the sign, so use the mediant
-      | otherwise  = b :/ d
+    m | c * d >= 0 = Q (a+b) (c+d) -- we agree on the sign, so use the mediant
+      | otherwise  = Q b d
 
 --------------------------------------------------------------------------------
 -- * Bihomographic Transformations
@@ -252,7 +250,7 @@ tm2 (T a b a' b' c d c' d') (M e f g h) = T
 --            --------------------
 --            (ke + ng)y + (kf+nh)
 tq1 :: Num a => T a -> Q a -> M a
-tq1 (T a b c d e f g h) (k :/ n) = M
+tq1 (T a b c d e f g h) (Q k n) = M
   (k*a+n*c) (k*b+n*d)
   (k*e+n*g) (k*f+n*h)
 
@@ -266,7 +264,7 @@ tq1 (T a b c d e f g h) (k :/ n) = M
 --            (ke + nf)x + (kg + nh)
 -- @
 tq2 :: Num a => T a -> Q a -> M a
-tq2 (T a b c d e f g h) (k :/ n) = M
+tq2 (T a b c d e f g h) (Q k n) = M
   (k*a+n*b) (k*c+n*d)
   (k*e+n*f) (k*g+n*h)
 
@@ -290,6 +288,7 @@ data LF
 
 -- | smart constructor to apply a homographic transformation
 hom :: M Z -> LF -> LF
+-- hom (Hom a _ 0 0) _             = Quot a 0
 hom m                (Quot q)      = Quot (mq m q)
 hom m                (Hom n x)     = Hom (m <> n) x
 hom (fmap lift -> m) (Hurwitz o)   = hurwitz (m <> o <> inv m)
@@ -322,13 +321,13 @@ bihom m x y = Bihom m x y
 
 -- smart constructor
 hurwitz :: M (P Z) -> LF
-hurwitz (fmap at0 -> M a b c d) | a*d == c*b = Quot (a :/ c)
+-- hurwitz (fmap at0 -> M a b c d) | a*d == c*b = Quot (Q a c) -- singular: TODO: check this
 hurwitz m = Hurwitz m
 
 -- extract a partial quotient
 quotient :: LF -> Maybe (Z, LF)
-quotient (Quot (k :/ n)) = case quotRem k n of
-  (q, r) -> Just (q, Quot (n :/ r))
+quotient (Quot (Q k n)) = case quotRem k n of
+  (q, r) -> Just (q, Quot (Q n r))
 quotient (Hom (M a b 0 0) xs) = Nothing -- infinity
 quotient (Hom m@(M a b c d) xs) 
   | c /= 0, d /= 0
@@ -351,13 +350,13 @@ instance Num LF where
   negate = hom $ M (-1) 0 0 1
   abs xs | xs < 0 = negate xs
          | otherwise = xs
-  signum xs = Quot $ (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) :/ 1
-  fromInteger n = Quot $ fromInteger n :/ 1
+  signum xs = Quot (Q (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) 1)
+  fromInteger n = Quot (Q (fromInteger n) 1)
    
 instance Fractional LF where
   (/) = bihom $ T 0 1 0 0 0 0 1 0
   recip = hom $ M 0 1 1 0
-  fromRational (k :% n) = Quot $ fromInteger k :/ fromInteger n
+  fromRational (k :% n) = Quot $ Q (fromInteger k) (fromInteger n)
 
 instance Floating LF where
   pi = M 0 4 1 0 `hom` hurwitz (M (P [1,2]) (P [1,2,1]) 1 0)
