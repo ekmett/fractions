@@ -91,46 +91,54 @@ instance IntegralDomain a => Num (P a) where
 -- | Extended, unreduced, field of fractions
 -- 
 -- @
--- Q a = Frac a ∪ {∞,⊥}
+-- Va = Frac a ∪ {∞,⊥}
 -- @
 --
 -- @
--- ⊥ = Q 0 0
--- ∞ = Q a 0, a /= 0
+-- ⊥ = V0 0
+-- ∞ = Va 0, a /= 0
 -- @
-data Q a = Q a a
+data V a = V a a
   deriving (Show, Functor)
 
-mediant :: Num a => Q a -> Q a -> Q a
-mediant (Q a b) (Q c d) = Q (a + c) (b + d)
+mediant :: Num a => V a -> V a -> V a
+mediant (V a b) (V c d) = V (a + c) (b + d)
 
-indeterminate :: IntegralDomain a => Q a -> Bool
-indeterminate (Q a b) = a == 0 && b == 0
+indeterminate :: IntegralDomain a => V a -> Bool
+indeterminate (V a b) = a == 0 && b == 0
 
-infinite :: IntegralDomain a => Q a -> Bool
-infinite (Q a b) = a /= 0 && b == 0
+infinite :: IntegralDomain a => V a -> Bool
+infinite (V a b) = a /= 0 && b == 0
 
-instance (IntegralDomain a, Eq a) => Eq (Q a) where
-  Q a 0 == Q c d = d == 0 && (a == 0) == (c == 0)
-  _     == Q _ 0 = False
-  Q a b == Q c d = a * d == b * c
+instance (IntegralDomain a, Eq a) => Eq (V a) where
+  V a 0 == V c 0 = (a == 0) == (c == 0)
+  V _ 0 == _     = False
+  _     == V _ 0 = False
+  V a b == V c d = a * d == b * c
 
-instance (IntegralDomain a, Ord a) => Ord (Q a) where
-  -- TODO: compare with _|_ and inf correctly
-  compare (Q a b) (Q c d) = compare (a * d) (b * c)
+instance (IntegralDomain a, Ord a) => Ord (V a) where
+  compare (V a b) (V c d)
+    | b * d /= 0 = compare (a * d) (b * c)
+    | otherwise = hard a b c d where
+      hard 0 0 0 0 = EQ
+      hard 0 0 _ _ = LT
+      hard _ _ 0 0 = GT
+      hard _ 0 _ 0 = EQ
+      hard _ 0 _ _ = GT
+      hard _ _ _ _ = LT -- _ _ _ 0, really
 
-instance IntegralDomain a => Num (Q a) where
-  Q a b + Q c d = Q (if b*d == 0 then hard a b c d else a*d+b*c) (b*d) where
+instance IntegralDomain a => Num (V a) where
+  V a b + V c d = V (if b*d == 0 then hard a b c d else a*d+b*c) (b*d) where
     hard _ _ 0 0 = 0 -- _|_ + a   = _|_
     hard 0 0 _ _ = 0 -- a + _|_   = _|_
     hard _ 0 _ 0 = 0 -- inf + inf = _|_
     hard _ _ _ _ = 1 -- inf - a   = inf
-  Q a b - Q c d = Q (if b*d == 0 then hard a b c d else a*d-b*c) (b*d) where
+  V a b - V c d = V (if b*d == 0 then hard a b c d else a*d-b*c) (b*d) where
     hard _ _ 0 0 = 0 -- _|_ - a   = _|_
     hard 0 0 _ _ = 0 -- a - _|_   = _|_
     hard _ 0 _ 0 = 0 -- inf - inf = _|_
     hard _ _ _ _ = 1 -- inf - a   = inf
-  Q a b * Q c d = Q (if b*d == 0 then hard a b c d else a*c) (b*d) where
+  V a b * V c d = V (if b*d == 0 then hard a b c d else a*c) (b*d) where
     hard _ _ 0 0 = 0 -- a   * _|_ = _|_
     hard 0 0 _ _ = 0 -- _|_ * a   = _|_
     hard _ 0 0 _ = 0 -- inf * 0   = _|_
@@ -138,33 +146,33 @@ instance IntegralDomain a => Num (Q a) where
     hard _ _ _ _ = 1 -- inf * inf = inf
   abs xs = signum xs * xs
   signum = fmap signum
-  fromInteger n = Q (fromInteger n) 1
+  fromInteger n = V (fromInteger n) 1
 
-instance IntegralDomain a => Fractional (Q a) where
-  recip (Q a b) = Q b a
-  q@(Q 0 0) / _ = q
-  _ / q@(Q 0 0) = q
-  Q _ 0 / Q _ 0 = Q 0 0
-  q@(Q _ 0) / _ = q
-  Q 0 _ / Q 0 _ = Q 0 0
-  Q 0 _ / _     = Q 0 1
-  _ / Q 0 _     = undefined -- TODO finish this
+instance IntegralDomain a => Fractional (V a) where
+  recip (V a b) = V b a
+  q@(V 0 0) / _ = q
+  _ / q@(V 0 0) = q
+  V _ 0 / V _ 0 = V 0 0
+  q@(V _ 0) / _ = q
+  V 0 _ / V 0 _ = V 0 0
+  V 0 _ / _     = V 0 1
+  _ / V 0 _     = undefined -- TODO finish this
 {-
-  Q a b / Q c d = Q (if b*c == 0 then hard a b c d else a*d) (b*c) where
+  V a b / V c d = V (if b*c == 0 then hard a b c d else a*d) (b*c) where
     hard 0 0 _ _ = 0 -- _|_ / x = _|_
     hard _ _ 0 0 = 0 -- x / _|_ = _|_
     hard _ 0 _ 0 = 0 -- inf / inf = _|_ 
 -}
-  fromRational r = Q (fromInteger (numerator r)) (fromInteger (denominator r))
+  fromRational r = V (fromInteger (numerator r)) (fromInteger (denominator r))
 
-instance (Integral a, IntegralDomain a) => Real (Q a) where
-  toRational (Q k n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
+instance (Integral a, IntegralDomain a) => Real (V a) where
+  toRational (V k n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
 
-instance (Integral a, IntegralDomain a) => RealFrac (Q a) where
-  properFraction (Q a b) = case divMod a b of
-    (q, r) -> (fromIntegral q, Q r b)
+instance (Integral a, IntegralDomain a) => RealFrac (V a) where
+  properFraction (V a b) = case divMod a b of
+    (q, r) -> (fromIntegral q, V r b)
 
-instance IntegralDomain a => IntegralDomain (Q a)
+instance IntegralDomain a => IntegralDomain (V a)
 
 --------------------------------------------------------------------------------
 -- * Mobius Transformations
@@ -187,17 +195,17 @@ instance Num a => Monoid (M a) where
 inv :: Num a => M a -> M a
 inv (M a b c d) = M (negate d) b c (negate a)
 
-mq :: Num a => M a -> Q a -> Q a
-mq (M a b c d) (Q e f) = Q (a*e+b*f) (c*e+d*f)
+mv :: Num a => M a -> V a -> V a
+mv (M a b c d) (V e f) = V (a*e+b*f) (c*e+d*f)
 
 -- |
 -- @
 -- bounds (M a 1 1 0) = (a, infinity)
 -- @
-bounds :: (Num a, Ord a) => M a -> (Q a, Q a)
+bounds :: (Num a, Ord a) => M a -> (V a, V a)
 bounds (M a b c d)
-  | a*d > b*c = (Q b d, Q a c)
-  | otherwise = (Q a c, Q b d)
+  | a*d > b*c = (V b d, V a c)
+  | otherwise = (V a c, V b d)
 
 
 -- | much tighter bounds assuming we derive from a digits of a continued fraction
@@ -205,13 +213,13 @@ bounds (M a b c d)
 -- @
 -- cfbounds (M a 1 1 0) = (a, a+1)
 -- @
-cfbounds :: (Num a, Ord a) => M a -> (Q a, Q a)
+cfbounds :: (Num a, Ord a) => M a -> (V a, V a)
 cfbounds (M a b c d)
-  | a*d > b*c = (m, Q a c)
-  | otherwise = (Q a c, m)
+  | a*d > b*c = (m, V a c)
+  | otherwise = (V a c, m)
   where
-    m | c * d >= 0 = Q (a+b) (c+d) -- we agree on the sign, so use the mediant
-      | otherwise  = Q b d
+    m | c * d >= 0 = V (a+b) (c+d) -- we agree on the sign, so use the mediant
+      | otherwise  = V b d
 
 --------------------------------------------------------------------------------
 -- * Bihomographic Transformations
@@ -278,8 +286,8 @@ tm2 (T a b a' b' c d c' d') (M e f g h) = T
 --          = (ka + nc)y + (kb+nd)
 --            --------------------
 --            (ke + ng)y + (kf+nh)
-tq1 :: Num a => T a -> Q a -> M a
-tq1 (T a b c d e f g h) (Q k n) = M
+tq1 :: Num a => T a -> V a -> M a
+tq1 (T a b c d e f g h) (V k n) = M
   (k*a+n*c) (k*b+n*d)
   -------------------
   (k*e+n*g) (k*f+n*h)
@@ -293,8 +301,8 @@ tq1 (T a b c d e f g h) (Q k n) = M
 --            ----------------------
 --            (ke + nf)x + (kg + nh)
 -- @
-tq2 :: Num a => T a -> Q a -> M a
-tq2 (T a b c d e f g h) (Q k n) = M
+tq2 :: Num a => T a -> V a -> M a
+tq2 (T a b c d e f g h) (V k n) = M
   (k*a+n*b) (k*c+n*d)
   -------------------
   (k*e+n*f) (k*g+n*h)
@@ -308,11 +316,79 @@ minmax2 x y
 -- | best naive homographic approximation
 approx :: (IntegralDomain a, Ord a) => T a -> M a
 approx (T a b c d e f g h) 
-  | (i,j) <- minmax2 (Q a e) (Q b f)
-  , (k,l) <- minmax2 (Q c g) (Q g h)
-  , Q m o <- min i k
-  , Q n p <- max j l
+  | (i,j) <- minmax2 (V a e) (V b f)
+  , (k,l) <- minmax2 (V c g) (V g h)
+  , V m o <- min i k
+  , V n p <- max j l
   = M m n o p
+
+--------------------------------------------------------------------------------
+-- * Quadratic Fractional Transformations
+--------------------------------------------------------------------------------
+
+-- |
+-- z(x) = ax^2 + bx + c
+--        -------------
+--        dx^2 + ex + f
+--
+-- or
+--
+-- z(x,y) = ax^2 + bxy + cy^2
+--          -----------------
+--          dx^2 + exy + fy^2
+data Q a = Q
+  a a a
+  a a a
+  deriving (Show, Functor)
+
+-- z(g/h) = a(g/h)^2 + b(g/h) + c
+--          ---------------------
+--          d(g/h)^2 + e(g/h) + f
+--        = ag^2 + bgh + ch^2
+--          -----------------
+--        = dg^2 + egh + eh^2
+
+qv :: Num a => Q a -> V a -> V a
+qv (Q a b c d e f) (V g h) 
+  | gg <- g*g
+  , gh <- g*h
+  , hh <- h*h
+  = V (a*gg + b*gh + c*hh) (d*gg + e*gh + f*hh)
+
+-- z(m(x)) = a((gx+h)/(ix+j))^2 + b(gx+h)/(ix+j) + c
+--           ---------------------------------------
+--           d((gx+h)/(ix+j))^2 + e(gx+h)/(ix+j) + f
+--         = a(gx+h)^2 + b(gx+h)(ix+j) + c(ix+j)^2
+--           -------------------------------------
+--           d(gx+h)^2 + e(gx+h)(ix+j) + f(ix+j)^2
+--         = (agg + bgi + cii)x^2 + (2ahg + b(hi + gj) + 2cij)x  + (ahh + bhj + cjj)
+--           ---------------------------------------------------------------------
+--         = (dgg + egi + fii)x^2 + (2dhg + e(hi + gj) + 2fij)x  + (dhh + ehj + fjj)
+qm :: Num a => Q a -> M a -> Q a
+qm (Q a b c d e f) (M g h i j)
+  | gg <- g*g
+  , gi <- g*i
+  , ii <- i*i
+  , hg2 <- 2*h*g
+  , hi_gj <- h*i+g*j
+  , ij2 <- 2*i*j
+  , hh <- h*h
+  , hj <- h*j
+  , jj <- j*j
+  = Q
+  (a*gg + b*gi + c*ii) (a*hg2 + b*hi_gj + c*ij2) (a*hh + b*hj + c*jj)
+  (d*gg + e*gi + f*ii) (d*hg2 + e*hi_gj + f*ij2) (d*hh + e*hj + f*jj)
+  
+-- m(z(x)) = a(ex^2+fx+g) + b(hx^2+ix+j)
+--           ---------------------------
+--           c(ex^2+fx+g) + d(hx^2+ix+j)
+--         = (ae+bh)x^2 + (af+bi)x + ag+bj
+--           -----------------------------
+--           (ce+dh)x^2 + (cf+di)x + cg+dj
+mq :: Num a => M a -> Q a -> Q a
+mq (M a b c d) (Q e f g h i j) = Q
+  (a*e+b*h) (a*f+b*i) (a*g+b*j)
+  (c*e+d*h) (c*f+d*i) (c*g+d*j)
 
 --------------------------------------------------------------------------------
 -- * Exact Real Arithmetic
@@ -321,21 +397,23 @@ approx (T a b c d e f g h)
 -- nested linear fractional transformations
 --
 -- (m :* n :* ...) implies that all matrices from n onward always narrow a suitable interval.
--- Mero m n (Q r) -- gets simplified to m' :* Hurwitz n'
+-- Mero m n (Quot r) -- gets simplified to m' :* Hurwitz n'
 -- (m :* ...) = singular matrices m simplify to Q
 -- we should not find a mero inside of a Hom
 data LF
-  = Quot {-# UNPACK #-} !(Q Z)
-  | Hom {-# UNPACK #-} !(M Z) LF
-  | Hurwitz {-# UNPACK #-} !(M (P Z))
-  | Mero {-# UNPACK #-} !(T Z) {-# UNPACK #-} !(T (P Z)) LF
-  | Bihom {-# UNPACK #-} !(T Z) LF LF
+  = Quot {-# UNPACK #-} !(V Z)                              -- extended field of fractions
+  | Quad {-# UNPACK #-} !(Q Z) LF                           -- delayed quadratic fractional transformation
+  | Hom {-# UNPACK #-} !(M Z) LF                            -- linear fractional transformation
+  | Hurwitz {-# UNPACK #-} !(M (P Z))                       -- (generalized) hurwitz numbers
+  | Mero {-# UNPACK #-} !(T Z) {-# UNPACK #-} !(T (P Z)) LF -- nested bihomographic transformations
+  | Bihom {-# UNPACK #-} !(T Z) LF LF                       -- bihomographic transformation
   deriving Show
 
 -- | smart constructor to apply a homographic transformation
 hom :: M Z -> LF -> LF
 -- hom (Hom a _ 0 0) _             = Quot a 0
-hom m                (Quot q)      = Quot (mq m q)
+hom m                (Quot v)      = Quot (mv m v)
+hom m                (Quad q x)    = Quad (mq m q) x
 hom m                (Hom n x)     = Hom (m <> n) x
 hom (fmap lift -> m) (Hurwitz o)   = hurwitz (m <> o <> inv m)
 hom m                (Mero s t x)  = mero (mt m s) t x
@@ -367,13 +445,13 @@ bihom m x y = Bihom m x y
 
 -- smart constructor
 hurwitz :: M (P Z) -> LF
--- hurwitz (fmap at0 -> M a b c d) | a*d == c*b = Quot (Q a c) -- singular: TODO: check this
+-- hurwitz (fmap at0 -> M a b c d) | a*d == c*b = Quot (V a c) -- singular: TODO: check this
 hurwitz m = Hurwitz m
 
 -- extract a partial quotient
 quotient :: LF -> Maybe (Z, LF)
-quotient (Quot (Q k n)) = case quotRem k n of
-  (q, r) -> Just (q, Quot (Q n r))
+quotient (Quot (V k n)) = case quotRem k n of
+  (q, r) -> Just (q, Quot (V n r))
 quotient (Hom (M a b 0 0) xs) = Nothing -- infinity
 quotient (Hom m@(M a b c d) xs) 
   | c /= 0, d /= 0
@@ -384,7 +462,6 @@ quotient (Hom m@(M a b c d) xs)
 quotient (Hom m xs) = quotient (hom m xs)
 quotient _ = undefined
 -- TODO: finish this
-
 
 instance Eq LF
 
@@ -405,8 +482,8 @@ instance Num LF where
     0    1
   abs xs | xs < 0 = negate xs
          | otherwise = xs
-  signum xs = Quot (Q (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) 1)
-  fromInteger n = Quot (Q (fromInteger n) 1)
+  signum xs = Quot (V (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) 1)
+  fromInteger n = Quot (V (fromInteger n) 1)
    
 instance Fractional LF where
   (/) = bihom $ T
@@ -415,7 +492,7 @@ instance Fractional LF where
   recip = hom $ M
     0 1
     1 0
-  fromRational (k :% n) = Quot $ Q (fromInteger k) (fromInteger n)
+  fromRational (k :% n) = Quot $ V (fromInteger k) (fromInteger n)
 
 instance Floating LF where
   pi = M 0 4 1 0 `hom` hurwitz (M (P [1,2]) (P [1,2,1]) 1 0)
