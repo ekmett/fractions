@@ -1,407 +1,386 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE MultiWayIf #-}
--- import Data.Coerce
--- import Data.Function (on)
--- import Data.Ratio
-import GHC.Real (Ratio(..))
-import GHC.Integer.GMP.Internals (gcdInteger)
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE ViewPatterns #-}
+import Control.Applicative
+import Data.Ratio
+import Data.Semigroup
+import GHC.Real (Ratio((:%)))
 
--- | The (lazy) continued fraction:
---
--- @
--- [a0;a1,a2,a3,a3..an]
--- @
---
--- that represents
---
--- @
--- a0 + 1/(a1 + 1/(a2 + 1/(a3 + .. 1/(a_n))))
--- @
---
--- is given by 
---
--- @
--- CF [a0,a1,a2,a3..an]
--- @
---
--- Coefficients @a1..an@ are all strictly positive. a0 may be 0.
---
--- However, only non-negative continued fractions can be represented this way.
---
--- Negative continued fractions
---
--- @
--- -[a0;a1,a2,a3..an]
--- @
---
--- are represented by
---
--- @
--- CF [-a0,-a1,-a2,-a3..an]
--- @
---
--- The empty list or termination of a list represents an infinite coefficient.
---
--- This is consistent with the notion that truncating a continued fraction
--- is done by adding @1 / (a_n + 1/...)@  -- which needs to be 0, which happens
--- when @a_n@ is infinity.
---
--- This yields the following invariant.
---
--- All coefficients are negative or all coefficients are positive, after a possible
--- leading zero.
---
--- This matches the defacto operation of the Mathematica ContinuedFraction[x,n] combinator,
--- which actually disagrees with the MathWorld description of its operation.
+type Z = Integer
 
-data CF where
-  CF :: (s -> s -> Bool) -- compare two seeds, in order.
-     -> (s -> Step s)    -- step and generate a new seed.
-     -> s                -- current seed
-     -> CF
+--------------------------------------------------------------------------------
+-- * Polynomials
+--------------------------------------------------------------------------------
 
-data Step s where
-  Step :: !Integer -> s -> Step s
-  Skip :: s -> Step s -- for later stream fusion
-  Stop :: Step s
+-- no zero divisors
+class Num a => IntegralDomain a where
+  isZero :: a -> Bool
+  default isZero :: Eq a => a -> Bool
+  isZero a = a == 0
 
-next :: [Integer] -> Step [Integer]
-next (a:as) = Step a as
-next []     = Stop
+instance IntegralDomain Integer
+instance (IntegralDomain a, Integral a) => IntegralDomain (Ratio a)
+instance IntegralDomain Float
+instance IntegralDomain Double
 
-steps :: Int -> (s -> Step s) -> s -> [Integer] 
-steps n f s0 = go n s0 where
-  go 0 _ = []
-  go k s = case f s of
-    Stop -> []
-    Skip s' -> go (k-1) s'
-    Step r s' -> r : go (k-1) s'
+data P a = P [a]
+  deriving (Show, Eq)
 
-data Periodic 
-  = Cold (Cyc Integer)
-  | Hot {-# UNPACK #-} !Int [Integer] !Integer [Integer]
+instance IntegralDomain a => IntegralDomain (P a) where
+  isZero (P xs) = null xs
 
-cf :: Cyc Integer -> CF
-cf as = CF eq step (Cold as) where
-  eq (Cold _)    = const False
-  eq (Hot n _ _ _) = \(Hot m _ _ _) -> n == m
-  step (Cold (b :+ bs))    = Step b (Cold bs)
-  step (Cold (Cyc n (b:bs))) = Step b (Hot 0 bs b bs)
-  step (Cold (Cyc _ []))     = Stop
-  step (Hot n (b:bs) c cs) = Step b (Hot (n+1) bs c cs)
-  step (Hot _ [] b bs)     = Step b (Hot 0 bs b bs)
+zeroes :: Num a => Int -> [a] -> [a]
+zeroes 0 xs = xs
+zeroes n xs = 0 : zeroes (n-1) xs
 
-infixr 5 :+
+xTimes :: Num a => P a -> P a
+xTimes (P []) = P []
+xTimes (P as) = P (0:as)
 
-data Cyc a
-  = a :+ Cyc a -- a + 1 / ...
-  | Cyc {-# UNPACK #-} !Int [a]    -- a cyclic list
+(*^) :: IntegralDomain a => a -> P a -> P a
+a *^ P bs 
+  | isZero a = P []
+  | otherwise = P $ map (a*) bs
 
-cyc :: [a] -> Cyc a
-cyc xs = Cyc (length xs) xs
+lift :: IntegralDomain a => a -> P a
+lift a
+  | isZero a = P []
+  | otherwise = P [a]
 
+-- evaluate a polynomial at 0
+at0 :: Num a => P a -> a
+at0 (P (a:_)) = a
+at0 (P [])    = 0
 
-instance Show a => Show (Cyc a) where
-  showsPrec d (a :+ as) = showParen (d > 5) $
-    showsPrec 6 a . showString " :+ " . showsPrec 5 as
-  showsPrec d (Cyc n as) = showParen (d > 10) $ 
-    showString "Cyc " . showsPrec 11 n . showChar ' ' . showsPrec 11 as
+-- evaluate using Horner's rule
+at :: Num a => a -> P a -> a
+at x (P as) = foldr (\a r -> a + x*r) 0 as
 
--- | Explicitly detect periodicity with brent's teleporting tortoise
---
--- Produces a finite cycle for quadratic irrationals.
-brent :: CF -> Cyc Integer
-brent (CF p f s0) = case f s0 of
-    Stop -> Cyc 0 []
-    Skip s -> go 1 1 (p s0) s
-    Step r s -> r :+ go 1 1 (p s0) s
-  where
-    go k n t s
-      | t s = Cyc k (steps k f s) -- k counts skips, its high
-      | k == n = step 0 (n*2) (p s) s
-      | otherwise = step k n t s
-    step k n t s = case f s of
-      Stop -> Cyc 0 []
-      Skip s' -> go (k+1) n t s'
-      Step r s' -> r :+ go (k+1) n t s'
-    
-{-
-    -- | t s = Cyc k (til0 k t s) -- k counts skips, its high
-    | otherwise = case f s of
-    Stop -> Cyc 0 []
-    Skip s'  -- hey, we've been here before, so we'll get back
-      | k == n    -> go 0 (n*2) (p s) s'
-      | otherwise -> go (k+1) n t s'
-    Step r s' -> if 
-      | k == n    -> r :+ go 0 (n*2) (p s) s'
-      | otherwise -> r :+ go (k+1) n t s'
--}
+instance IntegralDomain a => Semigroup (P a) where
+  P as <> x = foldr (\a r -> lift a + x*r) 0 as
 
-{-
-  til0 n t s = case f s of
-    Stop -> []
-    Skip s'   -> til (n-1) t s'
-    Step r s' -> r : til (n-1) t s'
-  til n t s 
-    | t s = [] 
-    | n == 0 = [] 
-    | otherwise = til0 n t s
--}
+instance IntegralDomain a => Monoid (P a) where
+  mempty = P [0,1]
+  mappend = (<>)
 
-coefs :: CF -> [Integer]
-coefs (CF _ f s0) = go s0 where
-  go s = case f s of 
-    Step a s' -> a : go s'
-    Skip s' -> go s'
-    Stop -> []
+instance IntegralDomain a => Num (P a) where
+  P as0 + P bs0 = P $ go 0 as0 bs0 where
+    go n (a:as) (b:bs) = case a + b of
+      c | isZero c  -> go (n + 1) as bs
+        | otherwise -> zeroes n (c : go 0 as bs)
+    go _ [] [] = []
+    go n [] bs = zeroes n bs
+    go n as [] = zeroes n as
+  P as0 - P bs0 = P $ go 0 as0 bs0 where
+    go n (a:as) (b:bs) = case a - b of
+      c | isZero c  -> go (n + 1) as bs
+        | otherwise -> zeroes n (c : go 0 as bs)
+    go _ [] [] = []
+    go n [] bs = zeroes n (map negate bs)
+    go n as [] = zeroes n as
+  P as0 * bs = go as0 where
+    go [] = P []
+    go (a:as)
+      | isZero a = xTimes (go as)
+      | otherwise = a *^ bs + xTimes (go as)
+  negate (P as) = P (map negate as)
+  abs xs = signum xs * xs
+  signum (P []) = P []
+  signum (P as) = P [signum (last as)]
+  fromInteger 0 = P []
+  fromInteger n = P [fromInteger n]
 
-infinity :: CF
-infinity = CF (\_ _ -> False) (\_ -> Stop) ()
+--------------------------------------------------------------------------------
+-- * Extended Rationals
+--------------------------------------------------------------------------------
 
-aperiodic :: [Integer] -> CF
-aperiodic = CF (\_ _ -> False) next 
-
--- | Euler's constant.
-exp' :: CF
-exp' = aperiodic $ 2:1:k 2 where k n = n:1:1:k (n + 2)
-
-sqrt2 :: CF
-sqrt2 = cf (1 :+ Cyc 1 [2])
-
-sqrt7 :: CF
-sqrt7 = cf (2 :+ Cyc 4 [1,1,1,4])
-
--- | The golden ratio, aka, the "most irrational number".
-phi :: CF
-phi = CF (\_ _ -> True) (\() -> Step 1 ()) ()
-
-instance Show CF where
-  showsPrec d c = showParen (d > 10) $
-    showString "cf " . showsPrec 11 (brent c)
-
-{-
-
-instance Eq CF where
-  as == bs = compare as bs == EQ
-
-cmp :: Cyc Integer -> Cyc Integer -> Ordering
-cmp (Cyc []) (Cyc []) = EQ
-cmp _        (Cyc []) = LT
-cmp (Cyc []) _        = GT
-cmp (Cyc xs) (Cyc ys) == xs == ys
-cmp (a :+ as) (b :+ bs) = case compare a b of
-  LT -> LT
-  EQ -> cmp bs as -- swap sense
-  GT -> GT
-
-instance Ord CF where
-  -- TODO: normalize and check for equality with cycles
-  compare as bs = cmp (coefs as) (coefs bs)
-
--}
-
-
--- | Compute a series of convergents, which alternate between optimal conservative approximations above and below to the actual answer, in increasing order by |denominator|, such that given the denominator any rational that lies closer to the real answer must have a larger denominator.
-convergents  :: Fractional a => CF -> [a]
-convergents (CF _ f s0) = go 1 0 0 1 s0 where
-  go a b c d s = case f s of 
-    Stop      -> []
-    Skip s'   -> go a b c d s'
-    Step y s'
-      | k <- a*y+b
-      , n <- c*y+d -> fromRational (k :% n) : go k a n c s'
-
--- | 
--- @
--- z = hom a b c d
--- @
+-- | Extended, unreduced, field of fractions
 -- 
--- represents an homographic equation of the form
---
 -- @
--- z = ax + b
---     ------
---     cx + d
+-- Q a = Frac a ∪ {∞,⊥}
 -- @
 --
--- with integer coefficients.
+-- @
+-- ⊥ = Q 0 0
+-- ∞ = Q a 0, a /= 0
+-- @
+data Q a = Q a a  
+  deriving (Show, Functor)
+
+mediant :: Num a => Q a -> Q a -> Q a
+mediant (Q a b) (Q c d) = Q (a + c) (b + d)
+
+indeterminate :: IntegralDomain a => Q a -> Bool
+indeterminate (Q a b) = isZero a && isZero b
+
+infinite :: IntegralDomain a => Q a -> Bool
+infinite (Q a b) = not (isZero a) && isZero b
+
+instance (Num a, Eq a) => Eq (Q a) where
+  Q a b == Q c d = a * d == b * c
+
+instance (Num a, Ord a) => Ord (Q a) where
+  compare (Q a b) (Q c d) = compare (a * d) (b * c)
+
+instance Num a => Num (Q a) where
+  Q a b + Q c d = Q (a*d+b*c) (b*d)
+  Q a b - Q c d = Q (a*d-b*c) (b*d)
+  Q a b * Q c d = Q (a*c) (b*d)
+  abs xs = signum xs * xs
+  signum = fmap signum
+  fromInteger n = Q (fromInteger n) 1
+
+instance Num a => Fractional (Q a) where
+  recip (Q a b) = Q b a
+  Q a b / Q c d = Q (a*d) (b*c)
+  fromRational r = Q (fromInteger (numerator r)) (fromInteger (denominator r))
+
+instance Integral a => Real (Q a) where
+  toRational (Q k n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
+
+instance Integral a => RealFrac (Q a) where
+  properFraction (Q a b) = case divMod a b of
+    (q, r) -> (fromIntegral q, Q r b)
+
+instance IntegralDomain a => IntegralDomain (Q a) where
+  isZero (Q a b) = isZero a && not (isZero b)
+
+--------------------------------------------------------------------------------
+-- * Mobius Transformations
+--------------------------------------------------------------------------------
+
+-- | Linear fractional transformation
+data M a = M a a a a
+  deriving (Functor, Show)
+
+instance Num a => Semigroup (M a) where
+  M a b c d <> M e f g h = M (a*e+b*g) (a*f+b*h) (c*e+d*g) (c*f+d*h)
+
+instance Num a => Monoid (M a) where
+  mempty = M 1 0 0 1
+  mappend = (<>)
+
+inv :: Num a => M a -> M a
+inv (M a b c d) = M (negate d) b c (negate a)
+
+mq :: Num a => M a -> Q a -> Q a
+mq (M a b c d) (Q e f) = Q (a*e+b*f) (c*e+d*f)
+
+-- |
+-- @
+-- bounds (M a 1 1 0) = (a, infinity)
+-- @
+bounds :: (Num a, Ord a) => M a -> (Q a, Q a)
+bounds (M a b c d)
+  | a*d > b*c = (Q b d, Q a c)
+  | otherwise = (Q a c, Q b d)
+
+
+-- | much tighter bounds assuming we derive from a digits of a continued fraction
 --
--- TODO: detect cycles, once we do, detect cycle length, then our position in it
--- this will let us detect the length of the cycle we emit.
+-- @
+-- cfbounds (M a 1 1 0) = (a, a+1)
+-- @
+cfbounds :: (Num a, Ord a) => M a -> (Q a, Q a)
+cfbounds (M a b c d)
+  | a*d > b*c = (m, Q a c)
+  | otherwise = (Q a c, m)
+  where
+    m | c * d >= 0 = Q (a+b) (c+d) -- we agree on the sign, so use the mediant
+      | otherwise  = Q b d
 
-data Hom s = Hom !Integer !Integer !Integer !Integer (Maybe s)
+--------------------------------------------------------------------------------
+-- * Bihomographic Transformations
+--------------------------------------------------------------------------------
 
-hom :: Integer -> Integer -> Integer -> Integer -> CF -> CF
-hom a0 b0 c0 d0 (CF eq0 step0 s0) = CF eq step (Hom a0 b0 c0 d0 (Just s0)) where
-  eq (Hom _ _ _ _ Nothing) = const False
-  eq (Hom a b c d (Just s)) = \xs -> case xs of
-      Hom a' b' c' d' (Just s') -> case a `quotRem` am of
-        (q,0) -> bm*q == b' && cm*q == c' && dm*q == d' && p s'
-        _ -> False
-      _ -> False
-    where 
-      p = eq0 s
-      -- compute the gcd
-      m = a `gcdInteger` b `gcdInteger` c `gcdInteger` d
-      am = quot a m
-      bm = quot b m
-      cm = quot c m
-      dm = quot d m
+-- |
+-- @
+-- z = T a b c d e f g h
+-- @
+--
+-- represents the function
+-- 
+-- @
+-- z(x,y) = axy + bx + cy + d
+--          -----------------
+--          exy + fx + gy + d
+-- @
+--
+-- and can be viewed as being simultaneously a homographic transformation
+-- @z(x)[y]@ with coefficients in @Z[y]@:
+--
+-- z(x)[y] = (ay + b)x + (cy + d)
+--           --------------------
+--           (ey + f)x + (gy + h)
+--
+-- or as @z(y)[x]@ with coefficients in @Z[x]@:
+--
+-- z(y)[x] = (ax + c)y + (bx + d)
+--           --------------------
+--           (ey + g)y + (fy + h)
+--
+-- or in Z[y].
+data T a = T a a a a a a a a
+  deriving (Functor, Show)
 
-  step (Hom a b c d s) = stepHom step0 a b c d s
+-- | @mt f z x y = f(z(x,y))@
+mt :: Num a => M a -> T a -> T a
+mt (M a b c d) (T e e' f f' g g' h h') = T
+  (a*e+b*g) (a*e'+b*g') (a*f+b*h) (a*f'+b*h')
+  (c*e+d*g) (c*e'+d*g') (c*f+d*h) (c*f'+d*h')
 
-stepHom
-  :: (s -> Step s)
-  -> Integer -> Integer
-  -> Integer -> Integer
-  -> Maybe s -> Step (Hom s)
-stepHom _ _ _ 0 0 _ = Stop
-stepHom step0 a b c d ms
+-- | @tm1 z f x y = z(f(x),y) = z(f(x))[y]@
+tm1 :: Num a => T a -> M a -> T a
+tm1 (T a a' b b' c c' d d') (M e f g h) = T
+  (a*e+b*g) (a'*e+b'*g) (a*f+b*h) (a'*f+b'*h)
+  (c*e+d*g) (c'*e+d'*g) (c*f+d*h) (c'*f+d'*h)
+  
+-- | @tm2 z g x y = z(x,g(y)) = z(g(y))[x]@
+tm2 :: Num a => T a -> M a -> T a
+tm2 (T a b a' b' c d c' d') (M e f g h) = T
+  (a*e+b*g) (a*f+b*h) (a'*e+b'*g) (a'*f+b'*h)
+  (c*e+d*g) (c*f+d*h) (c'*e+d'*g) (c'*f+d'*h)
+
+-- |
+-- z(k/n,y) = (a(k/n) + c)y + (b(k/n) + d)
+--            ----------------------------
+--            (e(k/n) + g)y + (f(k/n) + h)
+--          = (ka + nc)y + (kb+nd)
+--            --------------------
+--            (ke + ng)y + (kf+nh)
+tq1 :: Num a => T a -> Q a -> M a
+tq1 (T a b c d e f g h) (Q k n) = M
+  (k*a+n*c) (k*b+n*d)
+  (k*e+n*g) (k*f+n*h)
+
+-- |
+-- @
+-- z(x,k/n) = ax(k/n) + bx + c(k/n) + d
+--            -------------------------
+--            ex(k/n) + fx + g(k/n) + d
+--          = (ka + nb)x + (kc + nd)
+--            ----------------------
+--            (ke + nf)x + (kg + nh)
+-- @
+tq2 :: Num a => T a -> Q a -> M a
+tq2 (T a b c d e f g h) (Q k n) = M
+  (k*a+n*b) (k*c+n*d)
+  (k*e+n*f) (k*g+n*h)
+
+--------------------------------------------------------------------------------
+-- * Exact Real Arithmetic
+--------------------------------------------------------------------------------
+
+-- nested linear fractional transformations
+--
+-- (m :* n :* ...) implies that all matrices from n onward always narrow a suitable interval.
+-- Mero m n (Q r) -- gets simplified to m' :* Hurwitz n'
+-- (m :* ...) = singular matrices m simplify to Q
+-- we should not find a mero inside of a Hom
+data LF
+  = Quot {-# UNPACK #-} !(Q Z)
+  | Hom {-# UNPACK #-} !(M Z) LF
+  | Hurwitz {-# UNPACK #-} !(M (P Z))
+  | Mero {-# UNPACK #-} !(T Z) {-# UNPACK #-} !(T (P Z)) LF
+  | Bihom {-# UNPACK #-} !(T Z) LF LF
+  deriving Show
+
+-- | smart constructor to apply a homographic transformation
+hom :: M Z -> LF -> LF
+-- hom (Hom a _ 0 0) _             = Quot a 0
+hom m                (Quot q)      = Quot (mq m q)
+hom m                (Hom n x)     = Hom (m <> n) x
+hom (fmap lift -> m) (Hurwitz o)   = hurwitz (m <> o <> inv m)
+hom m                (Mero s t x)  = mero (mt m s) t x
+hom m                (Bihom s x y) = bihom (mt m s) x y
+
+-- | apply a meromorphic function
+--
+-- @
+--    |
+--    s
+--   / \
+--  x   t 0
+--     / \
+--    x   t 1
+--       / .
+--      x   .
+--           .
+-- @
+mero :: T Z -> T (P Z) -> LF -> LF
+-- TODO: simplify if the matrix has no x component? y component?
+mero s t (Quot r) = hom (tq1 s r) (hurwitz (tq1 t (fmap lift r)))
+mero s t x = Mero s t x
+
+-- | apply a bihomographic transformation
+bihom :: T Z -> LF -> LF -> LF
+bihom m (Quot r) y = hom (tq1 m r) y
+bihom m x (Quot r) = hom (tq2 m r) x
+bihom m x y = Bihom m x y
+
+-- smart constructor
+hurwitz :: M (P Z) -> LF
+-- hurwitz (fmap at0 -> M a b c d) | a*d == c*b = Quot (Q a c) -- singular: TODO: check this
+hurwitz m = Hurwitz m
+
+-- extract a partial quotient
+quotient :: LF -> Maybe (Z, LF)
+quotient (Quot (Q k n)) = case quotRem k n of
+  (q, r) -> Just (q, Quot (Q n r))
+quotient (Hom (M a b 0 0) xs) = Nothing -- infinity
+quotient (Hom m@(M a b c d) xs) 
   | c /= 0, d /= 0
-  , q <- quot a c, q == quot b d
-  = Step q (Hom c d (a - c*q) (b - d*q) ms)
-  | otherwise = case ms of 
-     Nothing -> Skip (Hom a a c c Nothing)
-     Just s -> case step0 s of
-       Step y s' -> Skip (Hom (a*y+b) a (c*y+d) c (Just s'))
-       Skip s' -> Skip (Hom a b c d (Just s'))
-       Stop -> Skip (Hom a a c c Nothing)
+  , signum c * signum (c + d) > 0
+  , q <- quot a c
+  , q == quot b d
+  , n <- cf q = Just (q, Hom (inv n <> m) xs)
+quotient (Hom m xs) = quotient (hom m xs)
+quotient _ = undefined
+-- TODO: finish this
+  
+instance Eq LF
 
-data Bihom s t
-  = Bihom !Integer !Integer !Integer !Integer
-          !Integer !Integer !Integer !Integer (Maybe s) (Maybe t)
+instance Ord LF
 
--- | Gosper-style bihomographic transformations
---
--- @
--- z = axy + by + cx + d
---     -----------------
---     exy + fy + gx + h
--- @
-bihom :: Integer -> Integer -> Integer -> Integer
-      -> Integer -> Integer -> Integer -> Integer
-      -> CF -> CF -> CF
-bihom a0 b0 c0 d0 e0 f0 g0 h0 (CF eq1 step1 s1) (CF eq2 step2 s2)
-  = CF eq step (Bihom a0 b0 c0 d0 e0 f0 g0 h0 (Just s1) (Just s2)) where
+instance Num LF where
+  (+) = bihom $ T 0 1 1 0 0 0 0 1
+  (-) = bihom $ T 0 1 (-1) 0 0 0 0 1
+  (*) = bihom $ T 1 0 0 0 0 0 0 1
+  negate = hom $ M (-1) 0 0 1
+  abs xs | xs < 0 = negate xs
+         | otherwise = xs
+  signum xs = Quot (Q (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) 1)
+  fromInteger n = Quot (Q (fromInteger n) 1)
+   
+instance Fractional LF where
+  (/) = bihom $ T 0 1 0 0 0 0 1 0
+  recip = hom $ M 0 1 1 0
+  fromRational (k :% n) = Quot $ Q (fromInteger k) (fromInteger n)
 
-  meq f (Just s) (Just t) = f s t
-  meq _ Nothing Nothing = True
-  meq _ _ _ = False
+instance Floating LF where
+  pi = M 0 4 1 0 `hom` hurwitz (M (P [1,2]) (P [1,2,1]) 1 0)
+  exp = mero (T 1 1 2 0 (-1) 1 2 0) (T 0 1 (P [6,4]) 0 1 0 0 0)
 
-  -- eq (Bihom _ _ _ _ _ _ _ _ Nothing Nothing) = \_ -> False
+sqrt2 :: LF
+sqrt2 = cf 1 `hom` hurwitz (M 2 1 1 0)
 
-  -- were in the Hom case
+--------------------------------------------------------------------------------
+-- * Continued Fractions
+--------------------------------------------------------------------------------
 
-  -- TODO: copy the gcd improvements from hom
-  -- TODO: check to see if these are inverted
-  eq (Bihom a b _ _ e f _ _ ms Nothing) = 
-    \(Bihom a' b' _ _ e' f' _ _ ms' _)
-    -> a == a' && b == b' && e == e' && f == f' && meq eq1 ms ms'
+-- continued fraction digit
+cf :: Num a => a -> M a
+cf a = M a 1 1 0
 
-  eq (Bihom a _ c _ e _ g _ Nothing mt) =
-    \(Bihom a' _ c' _ e' _ g' _ _ mt')
-    -> a == a' && c == c' && e == e' && g == g' && meq eq2 mt mt'
+-- generalized continued fraction digit
+gcf :: Num a => a -> a -> M a
+gcf a b = M a b 1 0
 
-  eq (Bihom a b c d e f g h ms mt) = \(Bihom a' b' c' d' e' f' g' h' ms' mt')
-    -> a == a' && b == b' && c == c' && d == d'
-    && e == e' && f == f' && g == g' && h == h'
-    && meq eq1 ms ms' && meq eq2 mt mt'
+--------------------------------------------------------------------------------
+-- * Redundant Binary Representation
+--------------------------------------------------------------------------------
 
-{-
-  eq (Bihom a b c d e f g h (Just s) (Just t)) = \(Bihom a' b' c' d' e' f' g' h' ms' mt')
-    -> a == a' && b == b' && c == c' && d == d'
-    && e == e' && f == f' && g == g' && h == h'
-    && case ms' of 
-      Just s' -> eq1 s s' && case mt' of
-        Just t' -> eq2 t t'
-        _ -> False
-      _ -> False
--}
-
-  step (Bihom a b _ _ e f _ _ ms Nothing) = case stepHom step1 a b e f ms of
-    Stop -> Stop
-    Skip (Hom a' b' e' f' ms') -> Skip (Bihom a' b' 0 0 e' f' 0 0 ms' Nothing)
-    Step q (Hom a' b' e' f' ms') -> Step q (Bihom a' b' 0 0 e' f' 0 0 ms' Nothing)
-
-  step (Bihom a _ c _ e _ g _ Nothing mt) = case stepHom step2 a c e g mt of
-    Stop -> Stop
-    Skip (Hom a' c' e' g' mt') -> Skip (Bihom a' 0 c' 0 e' 0 g' 0 Nothing mt')
-    Step q (Hom a' c' e' g' mt') -> Step q (Bihom a' 0 c' 0 e' 0 g' 0 Nothing mt')
-
-  step (Bihom a b c d e f g h ms mt)
-   | e /= 0, f /= 0, g /= 0, h /= 0 
-   , q <- quot a e, q == quot b f
-   , q == quot c g, q == quot d h
-   = Step q (Bihom e f g h (a-q*e) (b-q*f) (c-q*g) (d-q*h) ms mt)
-
-  step (Bihom a b c d e f g h ms@(Just s) mt@(Just t))
-   | e /= 0 || f /= 0
-   , (e == 0 && g == 0) || abs (g*e*b - g*a*f) > abs (f*e*c - g*a*f)
-   = case step1 s of 
-     Step x s' -> Skip (Bihom (a*x+b) a (c*x+d) c (e*x+f) e (g*x+h) g (Just s') mt)
-     Skip s'   -> Skip (Bihom a b c d e f g h (Just s') mt)
-     Stop      -> Skip (Bihom a b c d e f g h Nothing mt)
-   | otherwise = case step2 t of
-     Step y t' -> Skip (Bihom (a*y+c) (b*y+d) a b (e*y+g) (f*y+h) e f ms (Just t'))
-     Skip t'   -> Skip (Bihom a b c d e f g h ms (Just t'))
-     Stop      -> Skip (Bihom a b c d e f g h ms Nothing)
-
-mapCF :: (Integer -> Integer) -> CF -> CF
-mapCF g (CF p f s0) = CF p f' s0 where
-  f' s = case f s of
-    Step a s' -> Step (g a) s'
-    Skip s' -> Skip s'
-    Stop -> Stop
-
-instance Num CF where
-  (+) = bihom
-    0 1 1 0 -- x + y
-    0 0 0 1 -- 1
-  (-) = bihom
-    0 (-1) 1 0 -- x - y
-    0 0    0 1 -- 1
-  (*) = bihom
-    1 0 0 0 -- xy
-    0 0 0 1 -- 1
-  negate = mapCF negate
-  abs = mapCF abs
-  signum (CF _ f s0) = CF (\_ _ -> False) step (SignumStart s0) where
-    step (SignumStart s) = case f s of
-      Step 0 s' -> Skip (SignumZero s')
-      Step x _  -> Step (signum x) SignumDone
-      Skip s'   -> Skip (SignumStart s')
-      Stop -> Step 1 SignumDone
-    step (SignumZero s) = case f s of
-      Step x _ -> Step (signum x) SignumDone
-      Skip s'  -> Skip (SignumZero s')
-      Stop     -> Step 0 SignumDone
-    step SignumDone = Stop
-  fromInteger n = aperiodic [n]
-
-data Signum s = SignumStart s | SignumZero s | SignumDone
-
-instance Fractional CF where
-  recip = hom 0 1 1 0 -- todo exploit the more efficient put on / take off 0 representation
-  (/) = bihom
-     0 0 1 0 -- x
-     0 1 0 0 -- y
-  fromRational (k0 :% n0) = aperiodic (go k0 n0) where
-    go k 0 = []
-    go k n = case k `quotRem` n of
-      (q, r) -> q : if r == 0
-        then []
-        else go n r
-
-instance Enum CF where
-  succ = hom
-    1 1 -- x + 1
-    0 1 -- 1
-  pred = hom
-    1 (-1) -- x - 1
-    0 1    -- 1
-  fromEnum (CF _ f s0) = go s0 where
-    go s = case f s of
-      Step n _ -> fromIntegral n
-      Skip s'  -> go s'
-      Stop     -> maxBound
-  toEnum = fromIntegral
+--------------------------------------------------------------------------------
+-- * Decimal
+--------------------------------------------------------------------------------
