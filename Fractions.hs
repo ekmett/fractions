@@ -13,11 +13,8 @@ type Z = Integer
 -- * Polynomials
 --------------------------------------------------------------------------------
 
--- no zero divisors
-class Num a => IntegralDomain a where
-  isZero :: a -> Bool
-  default isZero :: Eq a => a -> Bool
-  isZero a = a == 0
+-- "nice integral domains" we can compre for equality: no zero divisors
+class (Eq a, Num a) => IntegralDomain a where
 
 instance IntegralDomain Integer
 instance (IntegralDomain a, Integral a) => IntegralDomain (Ratio a)
@@ -28,7 +25,6 @@ data P a = P [a]
   deriving (Show, Eq)
 
 instance IntegralDomain a => IntegralDomain (P a) where
-  isZero (P xs) = null xs
 
 zeroes :: Num a => Int -> [a] -> [a]
 zeroes 0 xs = xs
@@ -39,14 +35,12 @@ xTimes (P []) = P []
 xTimes (P as) = P (0:as)
 
 (*^) :: IntegralDomain a => a -> P a -> P a
-a *^ P bs 
-  | isZero a = P []
-  | otherwise = P $ map (a*) bs
+0 *^ _ = 0
+a *^ P bs = P $ map (a*) bs
 
 lift :: IntegralDomain a => a -> P a
-lift a
-  | isZero a = P []
-  | otherwise = P [a]
+lift 0 = P []
+lift a = P [a]
 
 -- evaluate a polynomial at 0
 at0 :: Num a => P a -> a
@@ -67,23 +61,22 @@ instance IntegralDomain a => Monoid (P a) where
 instance IntegralDomain a => Num (P a) where
   P as0 + P bs0 = P $ go 0 as0 bs0 where
     go n (a:as) (b:bs) = case a + b of
-      c | isZero c  -> go (n + 1) as bs
-        | otherwise -> zeroes n (c : go 0 as bs)
+      0 -> go (n + 1) as bs
+      c -> zeroes n (c : go 0 as bs)
     go _ [] [] = []
     go n [] bs = zeroes n bs
     go n as [] = zeroes n as
   P as0 - P bs0 = P $ go 0 as0 bs0 where
     go n (a:as) (b:bs) = case a - b of
-      c | isZero c  -> go (n + 1) as bs
-        | otherwise -> zeroes n (c : go 0 as bs)
+      0 -> go (n + 1) as bs
+      c -> zeroes n (c : go 0 as bs)
     go _ [] [] = []
     go n [] bs = zeroes n (map negate bs)
     go n as [] = zeroes n as
   P as0 * bs = go as0 where
     go [] = P []
-    go (a:as)
-      | isZero a = xTimes (go as)
-      | otherwise = a *^ bs + xTimes (go as)
+    go (0:as) = xTimes (go as)
+    go (a:as) = a *^ bs + xTimes (go as)
   negate (P as) = P (map negate as)
   abs xs = signum xs * xs
   signum (P []) = P []
@@ -105,53 +98,83 @@ instance IntegralDomain a => Num (P a) where
 -- ⊥ = Q 0 0
 -- ∞ = Q a 0, a /= 0
 -- @
-data Q a = Q a a  
+data Q a = Q a a
   deriving (Show, Functor)
 
 mediant :: Num a => Q a -> Q a -> Q a
 mediant (Q a b) (Q c d) = Q (a + c) (b + d)
 
 indeterminate :: IntegralDomain a => Q a -> Bool
-indeterminate (Q a b) = isZero a && isZero b
+indeterminate (Q a b) = a == 0 && b == 0
 
 infinite :: IntegralDomain a => Q a -> Bool
-infinite (Q a b) = not (isZero a) && isZero b
+infinite (Q a b) = a /= 0 && b == 0
 
-instance (Num a, Eq a) => Eq (Q a) where
+instance (IntegralDomain a, Eq a) => Eq (Q a) where
+  Q a 0 == Q c d = d == 0 && (a == 0) == (c == 0)
+  _     == Q _ 0 = False
   Q a b == Q c d = a * d == b * c
 
-instance (Num a, Ord a) => Ord (Q a) where
+instance (IntegralDomain a, Ord a) => Ord (Q a) where
+  -- TODO: compare with _|_ and inf correctly
   compare (Q a b) (Q c d) = compare (a * d) (b * c)
 
-instance Num a => Num (Q a) where
-  Q a b + Q c d = Q (a*d+b*c) (b*d)
-  Q a b - Q c d = Q (a*d-b*c) (b*d)
-  Q a b * Q c d = Q (a*c) (b*d)
+instance IntegralDomain a => Num (Q a) where
+  Q a b + Q c d = Q (if b*d == 0 then hard a b c d else a*d+b*c) (b*d) where
+    hard _ _ 0 0 = 0 -- _|_ + a   = _|_
+    hard 0 0 _ _ = 0 -- a + _|_   = _|_
+    hard _ 0 _ 0 = 0 -- inf + inf = _|_
+    hard _ _ _ _ = 1 -- inf - a   = inf
+  Q a b - Q c d = Q (if b*d == 0 then hard a b c d else a*d-b*c) (b*d) where
+    hard _ _ 0 0 = 0 -- _|_ - a   = _|_
+    hard 0 0 _ _ = 0 -- a - _|_   = _|_
+    hard _ 0 _ 0 = 0 -- inf - inf = _|_
+    hard _ _ _ _ = 1 -- inf - a   = inf
+  Q a b * Q c d = Q (if b*d == 0 then hard a b c d else a*c) (b*d) where
+    hard _ _ 0 0 = 0 -- a   * _|_ = _|_
+    hard 0 0 _ _ = 0 -- _|_ * a   = _|_
+    hard _ 0 0 _ = 0 -- inf * 0   = _|_
+    hard 0 _ _ 0 = 0 -- 0   * inf = _|_
+    hard _ _ _ _ = 1 -- inf * inf = inf
   abs xs = signum xs * xs
   signum = fmap signum
   fromInteger n = Q (fromInteger n) 1
 
-instance Num a => Fractional (Q a) where
+instance IntegralDomain a => Fractional (Q a) where
   recip (Q a b) = Q b a
-  Q a b / Q c d = Q (a*d) (b*c)
+  q@(Q 0 0) / _ = q
+  _ / q@(Q 0 0) = q
+  Q _ 0 / Q _ 0 = Q 0 0
+  q@(Q _ 0) / _ = q
+  Q 0 _ / Q 0 _ = Q 0 0
+  Q 0 _ / _     = Q 0 1
+  _ / Q 0 _     = undefined -- TODO finish this
+{-
+  Q a b / Q c d = Q (if b*c == 0 then hard a b c d else a*d) (b*c) where
+    hard 0 0 _ _ = 0 -- _|_ / x = _|_
+    hard _ _ 0 0 = 0 -- x / _|_ = _|_
+    hard _ 0 _ 0 = 0 -- inf / inf = _|_ 
+-}
   fromRational r = Q (fromInteger (numerator r)) (fromInteger (denominator r))
 
-instance Integral a => Real (Q a) where
+instance (Integral a, IntegralDomain a) => Real (Q a) where
   toRational (Q k n) = toInteger k % toInteger n -- blows up on indeterminate and infinite forms
 
-instance Integral a => RealFrac (Q a) where
+instance (Integral a, IntegralDomain a) => RealFrac (Q a) where
   properFraction (Q a b) = case divMod a b of
     (q, r) -> (fromIntegral q, Q r b)
 
-instance IntegralDomain a => IntegralDomain (Q a) where
-  isZero (Q a b) = isZero a && not (isZero b)
+instance IntegralDomain a => IntegralDomain (Q a)
 
 --------------------------------------------------------------------------------
 -- * Mobius Transformations
 --------------------------------------------------------------------------------
 
 -- | Linear fractional transformation
-data M a = M a a a a
+data M a = M
+  a a
+  ---
+  a a
   deriving (Functor, Show)
 
 instance Num a => Semigroup (M a) where
@@ -221,25 +244,31 @@ cfbounds (M a b c d)
 --           (ey + g)y + (fy + h)
 --
 -- or in Z[y].
-data T a = T a a a a a a a a
+data T a = T
+  a a a a
+  -------
+  a a a a
   deriving (Functor, Show)
 
 -- | @mt f z x y = f(z(x,y))@
 mt :: Num a => M a -> T a -> T a
 mt (M a b c d) (T e e' f f' g g' h h') = T
   (a*e+b*g) (a*e'+b*g') (a*f+b*h) (a*f'+b*h')
+  -------------------------------------------
   (c*e+d*g) (c*e'+d*g') (c*f+d*h) (c*f'+d*h')
 
 -- | @tm1 z f x y = z(f(x),y) = z(f(x))[y]@
 tm1 :: Num a => T a -> M a -> T a
 tm1 (T a a' b b' c c' d d') (M e f g h) = T
   (a*e+b*g) (a'*e+b'*g) (a*f+b*h) (a'*f+b'*h)
+  -------------------------------------------
   (c*e+d*g) (c'*e+d'*g) (c*f+d*h) (c'*f+d'*h)
   
 -- | @tm2 z g x y = z(x,g(y)) = z(g(y))[x]@
 tm2 :: Num a => T a -> M a -> T a
 tm2 (T a b a' b' c d c' d') (M e f g h) = T
   (a*e+b*g) (a*f+b*h) (a'*e+b'*g) (a'*f+b'*h)
+  -------------------------------------------
   (c*e+d*g) (c*f+d*h) (c'*e+d'*g) (c'*f+d'*h)
 
 -- |
@@ -252,6 +281,7 @@ tm2 (T a b a' b' c d c' d') (M e f g h) = T
 tq1 :: Num a => T a -> Q a -> M a
 tq1 (T a b c d e f g h) (Q k n) = M
   (k*a+n*c) (k*b+n*d)
+  -------------------
   (k*e+n*g) (k*f+n*h)
 
 -- |
@@ -266,7 +296,23 @@ tq1 (T a b c d e f g h) (Q k n) = M
 tq2 :: Num a => T a -> Q a -> M a
 tq2 (T a b c d e f g h) (Q k n) = M
   (k*a+n*b) (k*c+n*d)
+  -------------------
   (k*e+n*f) (k*g+n*h)
+
+-- compute the minimum and maximum of 2 elements
+minmax2 :: Ord a => a -> a -> (a, a)
+minmax2 x y
+  | x < y     = (x, y)
+  | otherwise = (x, y)
+
+-- | best naive homographic approximation
+approx :: (IntegralDomain a, Ord a) => T a -> M a
+approx (T a b c d e f g h) 
+  | (i,j) <- minmax2 (Q a e) (Q b f)
+  , (k,l) <- minmax2 (Q c g) (Q g h)
+  , Q m o <- min i k
+  , Q n p <- max j l
+  = M m n o p
 
 --------------------------------------------------------------------------------
 -- * Exact Real Arithmetic
@@ -338,24 +384,37 @@ quotient (Hom m@(M a b c d) xs)
 quotient (Hom m xs) = quotient (hom m xs)
 quotient _ = undefined
 -- TODO: finish this
-  
+
+
 instance Eq LF
 
 instance Ord LF
 
 instance Num LF where
-  (+) = bihom $ T 0 1 1 0 0 0 0 1
-  (-) = bihom $ T 0 1 (-1) 0 0 0 0 1
-  (*) = bihom $ T 1 0 0 0 0 0 0 1
-  negate = hom $ M (-1) 0 0 1
+  (+) = bihom $ T
+    0 1 1 0
+    0 0 0 1
+  (-) = bihom $ T
+    0 1 (-1) 0
+    0 0 0    1
+  (*) = bihom $ T
+    1 0 0 0
+    0 0 0 1
+  negate = hom $ M
+    (-1) 0
+    0    1
   abs xs | xs < 0 = negate xs
          | otherwise = xs
   signum xs = Quot (Q (case compare xs 0 of LT -> -1; EQ -> 0; GT -> 1) 1)
   fromInteger n = Quot (Q (fromInteger n) 1)
    
 instance Fractional LF where
-  (/) = bihom $ T 0 1 0 0 0 0 1 0
-  recip = hom $ M 0 1 1 0
+  (/) = bihom $ T
+    0 1 0 0
+    0 0 1 0
+  recip = hom $ M
+    0 1
+    1 0
   fromRational (k :% n) = Quot $ Q (fromInteger k) (fromInteger n)
 
 instance Floating LF where
