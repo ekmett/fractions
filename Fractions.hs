@@ -291,10 +291,22 @@ posV (V a b) = case compare a 0 of
 data Fib a = Fib !a !a
   deriving (Show, Functor, Foldable, Traversable, Eq)
 
+instance (IntegralDomain a, Ord a) => Ord (Fib a) where
+  compare (Fib a b) (Fib c d) = case compare a c of
+    LT | b <= d    -> LT
+       | otherwise -> np (a-c) (b-d)
+    EQ -> compare b d
+    GT | b >= d    -> GT
+       | otherwise -> pn (a-c) (b-d)
+   where
+         -- convert to a(√5) and compare squares
+         np e f = compare (sq (e+2*f)) (5*sq e)
+         pn e f = compare (5*sq e) (sq (e+2*f))
+         sq x = x*x
+
 instance Num a => Num (Fib a) where
   Fib a b + Fib c d = Fib (a + c) (b + d)
-  -- Φ^2 = Φ+1
-  -- (aΦ+b)(cΦ+d) = ac(Φ+1) + (ad+bc)Φ + bd == (ac+ad+bc)Φ + (ac+bd)
+  -- Φ^2 = Φ+1, so (aΦ+b)(cΦ+d) = ac(Φ+1) + (ad+bc)Φ + bd == (ac+ad+bc)Φ + (ac+bd)
   Fib a b * Fib c d = Fib (a*(c + d) + b*c) (a*c + b*d)
   Fib a b - Fib c d = Fib (a - c) (b - d)
   negate (Fib a b) = Fib (negate a) (negate b)
