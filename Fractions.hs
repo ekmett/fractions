@@ -294,15 +294,14 @@ data Fib a = Fib !a !a
 instance (IntegralDomain a, Ord a) => Ord (Fib a) where
   compare (Fib a b) (Fib c d) = case compare a c of
     LT | b <= d    -> LT
-       | otherwise -> np (a-c) (b-d)
+       | otherwise -> go compare (a-c) (b-d)
     EQ -> compare b d
     GT | b >= d    -> GT
-       | otherwise -> pn (a-c) (b-d)
+       | otherwise -> go (flip compare) (a-c) (b-d)
    where
-         -- convert to a(√5) and compare squares
-         np e f = compare (sq (e+2*f)) (5*sq e)
-         pn e f = compare (5*sq e) (sq (e+2*f))
-         sq x = x*x
+     -- convert to a(√5) and compare squares
+     go k e f = k (sq (e+2*f)) (5*sq e)
+     sq x = x*x
 
 instance Num a => Num (Fib a) where
   Fib a b + Fib c d = Fib (a + c) (b + d)
