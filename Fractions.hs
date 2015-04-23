@@ -22,11 +22,9 @@ import Prelude hiding (foldr, foldl1)
 
 type Z = Integer
 
---------------------------------------------------------------------------------
--- * Polynomials
---------------------------------------------------------------------------------
-
--- "nice integral domains" we can compre for equality: no zero divisors
+-- | An integral domain has no zero divisors.
+--
+-- We care primarily about "nice integral domains" where we can compare for equality
 class (Eq a, Num a) => IntegralDomain a where
 
 instance IntegralDomain Integer
@@ -34,10 +32,12 @@ instance (IntegralDomain a, Integral a) => IntegralDomain (Ratio a)
 instance IntegralDomain Float
 instance IntegralDomain Double
 
+--------------------------------------------------------------------------------
+-- * Polynomials
+--------------------------------------------------------------------------------
+
 data P a = P [a]
   deriving (Show, Eq, Foldable, Functor)
-
-instance IntegralDomain a => IntegralDomain (P a) where
 
 zeroes :: Num a => Int -> [a] -> [a]
 zeroes 0 xs = xs
@@ -96,6 +96,8 @@ instance IntegralDomain a => Num (P a) where
   signum (P as) = P [signum (last as)]
   fromInteger 0 = P []
   fromInteger n = P [fromInteger n]
+
+instance IntegralDomain a => IntegralDomain (P a)
 
 --------------------------------------------------------------------------------
 -- * Extended Rationals
@@ -217,6 +219,12 @@ instance (Integral a, IntegralDomain a) => RealFrac (V a) where
   properFraction (V a b) = case divMod a b of
     (q, r) -> (fromIntegral q, V r b)
 
+instance IntegralDomain a => IntegralDomain (V a)
+
+--------------------------------------------------------------------------------
+-- * Rescaling Results
+--------------------------------------------------------------------------------
+
 integerLog2 :: Integer -> Int
 integerLog2 i = I# (integerLog2# i)
 
@@ -242,8 +250,9 @@ scaleP xs
     m = (foldl'.foldl') (.|.) 0 xs -- of all the bits
     n = m .&. negate m  -- keep least significant set bit
 
-
-instance IntegralDomain a => IntegralDomain (V a)
+--------------------------------------------------------------------------------
+-- * Intervals
+--------------------------------------------------------------------------------
 
 data I
   = U             -- the entire universe R∞
@@ -362,12 +371,17 @@ dphip = M (Fib 1 1) (Fib 0 1) (Fib 0 0) (Fib 1 0)
 -- * Affine transformations
 --------------------------------------------------------------------------------
 
+-- | @'Af' a b@ represents a function @f@ such that
+--
 -- @
--- M a = Af (V a)
--- T a = Af (Af (V a))
--- @
-
 -- f(x) = ax + b
+-- @
+--
+-- @
+-- M a ~ Af (V a)
+-- T a ~ Af (Af (V a))
+-- @
+--
 data Af a = Af a a
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
@@ -382,10 +396,6 @@ instance Num a => Semigroup (Af a) where
 instance Num a => Monoid (Af a) where
   mempty = Af 1 0
   mappend = (<>)
-
--- | construct a homographic transform from an affine transform
-am :: Num a => Af a -> M a
-am (Af a b) = M a b 0 1
 
 -- | convert an affine transform into a polynomial
 ap :: IntegralDomain a => Af a -> P a
@@ -450,6 +460,10 @@ det (M a b c d) = a*d - b*c
 -- @
 inv :: Num a => M a -> M a
 inv (M a b c d) = M (negate d) b c (negate a)
+
+-- | construct a homographic transform from an affine transform
+am :: Num a => Af a -> M a
+am (Af a b) = M a b 0 1
 
 -- | Apply a Mobius transformation to an extended rational.
 mv :: Num a => M a -> V a -> V a
@@ -623,7 +637,7 @@ cfbounds (M a b c d)
 
 -- |
 -- @
--- z = T a b c d e f g h = Af (Af (V a e) (V b f)) (Af (V c g) (V d h))
+-- z = T a b c d e f g h
 -- @
 --
 -- represents the function
@@ -735,6 +749,15 @@ approx (T a b c d e f g h)
   , V m o <- min i k
   , V n p <- max j l
   = M m n o p
+
+--------------------------------------------------------------------------------
+-- * Binary Quadratic Forms?
+--------------------------------------------------------------------------------
+
+-- @
+-- q(x,y) = Ax^2 + Bxy + C^2
+-- @
+data BQF a = BQF a a a deriving (Show, Functor, Foldable, Traversable)
 
 --------------------------------------------------------------------------------
 -- * Quadratic Fractional Transformations
