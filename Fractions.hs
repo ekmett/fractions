@@ -18,6 +18,7 @@ import Data.Traversable
 import GHC.Real (Ratio((:%)))
 import GHC.Types (Int(..))
 import GHC.Integer.Logarithms
+import Linear (Additive(..))
 import Prelude hiding (foldr, foldl1)
 
 type Z = Integer
@@ -113,7 +114,7 @@ instance IntegralDomain a => IntegralDomain (P a)
 -- ⊥ = V 0 0
 -- ∞ = V a 0, a /= 0
 -- @
-data V a = V a a
+data V a = V !a !a
   deriving (Show, Functor, Traversable)
 
 instance Foldable V where
@@ -255,8 +256,8 @@ scaleP xs
 --------------------------------------------------------------------------------
 
 data I
-  = U             -- the entire universe R∞
-  | I (V Z) (V Z) -- a closed interval
+  = U               -- the entire universe R∞
+  | I {-# UNPACK #-} !(V Z) {-# UNPACK #-} !(V Z) -- a closed interval
 
 class Columns f where
   columns :: Semigroup m => (V a -> m) -> f a -> m
@@ -282,16 +283,18 @@ posV (V a b) = case compare a 0 of
   GT -> b >= 0
 
 --------------------------------------------------------------------------------
--- * Z((1+√5)/2)
+-- * r((1+√5)/2) = r(√5)
 --------------------------------------------------------------------------------
 
 -- |
 -- @Fib a b :: Fib r@ denotes @aΦ + b@ ∈ r(Φ)
-data Fib a = Fib a a
-  deriving (Show, Functor, Foldable, Traversable)
+data Fib a = Fib !a !a
+  deriving (Show, Functor, Foldable, Traversable, Eq)
 
 instance Num a => Num (Fib a) where
   Fib a b + Fib c d = Fib (a + c) (b + d)
+  -- Φ^2 = Φ+1
+  -- (aΦ+b)(cΦ+d) = ac(Φ+1) + (ad+bc)Φ + bd == (ac+ad+bc)Φ + (ac+bd)
   Fib a b * Fib c d = Fib (a*(c + d) + b*c) (a*c + b*d)
   Fib a b - Fib c d = Fib (a - c) (b - d)
   negate (Fib a b) = Fib (negate a) (negate b)
@@ -318,38 +321,47 @@ instance MonadZip Fib where
   mzipWith f (Fib a b) (Fib c d) = Fib (f a c) (f b d)
   munzip (Fib (a,b) (c,d)) = (Fib a c, Fib b d)
 
-class Num a => Golden a where
+instance Additive Fib where
+  zero = Fib 0 0
+  (^+^) = (+)
+  (^-^) = (-)
+
+instance IntegralDomain a => IntegralDomain (Fib a)
+
+class IntegralDomain a => Golden a where
   -- | (1 + sqrt 5)/2
   phi :: a
   default phi :: Floating a => a
   phi = (1 + sqrt 5)*0.5
 
--- |
--- @
--- sqrt 5 = phi + iphi
--- @
-sqrt5 :: Golden a => a
-sqrt5 = 2*phi - 1
+  -- |
+  -- @
+  -- sqrt 5 = phi + iphi
+  -- @
+  sqrt5 :: a
+  sqrt5 = 2*phi - 1
 
--- |
--- @
--- phi * iphi = 1
--- @
-iphi :: Golden a => a
-iphi = phi - 1
+  -- |
+  -- @
+  -- phi * iphi = 1
+  -- @
+  iphi :: a
+  iphi = phi - 1
 
-instance Num a => Golden (Fib a) where
+instance IntegralDomain a => Golden (Fib a) where
   phi = Fib 1 0
 
 instance Golden Float
 instance Golden Double
 instance Golden E
+instance Golden a => Golden (V a) where
+  phi = V phi 1
 
 unfib :: Golden a => Fib a -> a
 unfib (Fib a b) = a*phi + b
 
 -- fast fibonacci transform
-fib :: Num a => Integer -> a
+fib :: IntegralDomain a => Integer -> a
 fib n
   | n >= 0 = getPhi (phi ^ n)
   | otherwise = getPhi (iphi ^ negate n)
@@ -360,8 +372,8 @@ getPhi (Fib a _) = a
 -- |
 -- redundant digits in base Φ
 -- @
--- dphin = digit phi (-iphi)
--- dphip = digit phi iphi
+-- dphin = scaleP $ digit phi (negate iphi)
+-- dphip = scaleP $ digit phi iphi
 -- @
 dphin, dphip :: M (Fib Z)
 dphin = M (Fib 1 0) (Fib 0 0) (Fib 0 1) (Fib 1 1)
@@ -487,8 +499,9 @@ instance Informed V where
   least _ = maxBound
 
 instance Informed M where
-  most m@(M a b c d) = floor $ logBase 2 $
-     fromIntegral ((a+b)*(c+d)) / fromIntegral (det m)
+  most (fmap fromInteger -> m@(M a b c d)) = floor $ logBase 2 $ abs $
+    (a+b) * (c+d) / det m
+  least m = most m - 1
 
 trace :: Num a => M a -> a
 trace (M a _ _ d) = a + d
@@ -985,6 +998,8 @@ instance Floating E where
   sinh x = quad (Q 1 0 (-1) 0 2 0) (exp x)
   cosh x = quad (Q 1 0 1 0 2 0)    (exp x)
   tanh x = quad (Q 1 0 (-1) 1 0 1) (exp x)
+
+instance IntegralDomain E
 
 sqrt2 :: Eff f => f
 sqrt2 = eff $ cfdigit 1 `hom` hurwitz (M 2 1 1 0)
