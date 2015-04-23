@@ -695,8 +695,8 @@ tm2 (T a b a' b' c d c' d') (M e f g h) = T
 --            --------------------
 --            (ke + ng)y + (kf+nh)
 -- @
-tq1 :: Num a => T a -> V a -> M a
-tq1 (T a b c d e f g h) (V k n) = M
+tv1 :: Num a => T a -> V a -> M a
+tv1 (T a b c d e f g h) (V k n) = M
   (k*a+n*c) (k*b+n*d)
   -------------------
   (k*e+n*g) (k*f+n*h)
@@ -715,11 +715,14 @@ tq1 (T a b c d e f g h) (V k n) = M
 --            ----------------------
 --            (ke + nf)x + (kg + nh)
 -- @
-tq2 :: Num a => T a -> V a -> M a
-tq2 (T a b c d e f g h) (V k n) = M
+tv2 :: Num a => T a -> V a -> M a
+tv2 (T a b c d e f g h) (V k n) = M
   (k*a+n*b) (k*c+n*d)
   -------------------
   (k*e+n*f) (k*g+n*h)
+
+tq :: Num a => T a -> Q a
+tq (T a b c d e f g h) = Q a (b+c) d e (f+g) h
 
 transposeT :: T a -> T a
 transposeT (T a b c d e f g h) = T a c b d e g f h
@@ -882,13 +885,13 @@ instance Hom E where
 -- @
 mero :: T Z -> T (P Z) -> E -> E
 -- TODO: simplify if the matrix has no x component? y component?
-mero s t (Eff (Quot r)) = hom (tq1 s r) (hurwitz (tq1 t (fmap lift r)))
+mero s t (Eff (Quot r)) = hom (tv1 s r) (hurwitz (tv1 t (fmap lift r)))
 mero s t x = Mero (scale s) (scaleP t) x
 
 -- | apply a bihomographic transformation
 bihom :: T Z -> E -> E -> E
-bihom m (Eff (Quot r)) y = hom (tq1 m r) y
-bihom m x (Eff (Quot r)) = hom (tq2 m r) x
+bihom m (Eff (Quot r)) y = hom (tv1 m r) y
+bihom m x (Eff (Quot r)) = hom (tv2 m r) x
 bihom m x y = Bihom (scale m) x y
 {-# NOINLINE bihom #-}
 
@@ -923,7 +926,7 @@ nextF (Hurwitz m) = nextF (Hom (fmap at0 m) $ Hurwitz (fmap (<> P [1,1]) m)) -- 
 square :: E -> E
 square x = quad (Q 1 0 0 0 0 1) x
 
-{-# RULES "bihomographic to quadratic" forall a b c d e f g h x. bihom (T a b c d e f g h) x x = quad (Q a (b+c) d e (f+g) h) x #-}
+{-# RULES "bihomographic to quadratic" forall t x. bihom t x x = quad (tq t) x #-}
 
 instance Eq E
 instance Ord E
