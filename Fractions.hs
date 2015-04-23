@@ -732,7 +732,7 @@ instance Hom E where
 mero :: T Z -> T (P Z) -> E -> E
 -- TODO: simplify if the matrix has no x component? y component?
 mero s t (Eff (Quot r)) = hom (tq1 s r) (hurwitz (tq1 t (fmap lift r)))
-mero s t x = Mero s t x
+mero s t x = Mero (scale s) (scaleP t) x
 
 -- | apply a bihomographic transformation
 bihom :: T Z -> E -> E -> E
