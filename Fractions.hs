@@ -97,7 +97,6 @@ instance IntegralDomain a => Num (P a) where
 -- * Extended Rationals
 --------------------------------------------------------------------------------
 
-
 -- | Extended, unreduced, field of fractions
 -- 
 -- @
@@ -213,7 +212,6 @@ instance (Integral a, IntegralDomain a) => Real (V a) where
 instance (Integral a, IntegralDomain a) => RealFrac (V a) where
   properFraction (V a b) = case divMod a b of
     (q, r) -> (fromIntegral q, V r b)
-
 
 integerLog2 :: Integer -> Int
 integerLog2 i = I# (integerLog2# i)
@@ -652,13 +650,11 @@ mq (M a b c d) (Q e f g h i j) = Q
 -- nested linear fractional transformations
 --
 -- (m :* n :* ...) implies that all matrices from n onward always narrow a suitable interval.
--- Mero m n (Quot r) -- gets simplified to m' :* Hurwitz n'
 -- (m :* ...) = singular matrices m simplify to Q
--- we should not find a mero inside of a Hom
 
 data F
-  = Quot    {-# UNPACK #-} !(V Z)     -- extended field of fractions
-  | Hom     {-# UNPACK #-} !(M Z) F   -- linear fractional transformation
+  = Quot    {-# UNPACK #-} !(V Z)     -- extended rational
+  | Hom     {-# UNPACK #-} !(M Z) F   -- unapplied linear fractional transformation
   | Hurwitz {-# UNPACK #-} !(M (P Z)) -- (generalized) hurwitz numbers
   deriving Show
 
@@ -674,7 +670,8 @@ class Hom a where
 instance Hom F where
   hom m (Quot v) = Quot $ scale $ mv m v
   hom m (Hom n x) = Hom (scale $ m <> n) x -- check for efficiency
-  hom (fmap lift -> m) (Hurwitz o) = hurwitz (m <> o <> inv m)
+  hom (fmap lift -> m) (Hurwitz o) | det m /= 0 = hurwitz (m <> o <> inv m)
+  hom m x = Hom (scale m) x -- deferred hom
 
 class Eff a where
   eff :: F -> a
@@ -684,7 +681,7 @@ instance Eff F where
 
 data E
   = Eff F
-  | Quad {-# UNPACK #-} !(Q Z) E                           -- delayed quadratic fractional transformation
+  | Quad {-# UNPACK #-} !(Q Z) E                           -- quadratic fractional transformation
   | Mero {-# UNPACK #-} !(T Z) {-# UNPACK #-} !(T (P Z)) E -- nested bihomographic transformations
   | Bihom {-# UNPACK #-} !(T Z) E E                        -- bihomographic transformation
   deriving Show
@@ -728,9 +725,8 @@ quad q (Eff (Quot v)) = Eff (Quot (qv q v))
 quad (Q 0 a b 0 c d) x = hom (M a b c d) x
 quad (Q a b c d e f) x
   | a*e == b*d, a*f == d*c, b*f == c*e, False = undefined
-      -- TODO:
-      -- we have a the 3x3 matrix that is antisymmetric and antireflexive of minor determinants of the 3x2 matrix, here we should be able to factor 
-      -- to find @Q pr ps pt qr qs qt@ and do something with that fact
+  -- TODO: we can factor our quadratic form into @Q (p*r) (p*s) (p*t) (q*r) (q*s) (q*t)@
+  -- do something with that fact
 quad q x = Quad q x
 
 -- smart constructor
@@ -761,10 +757,13 @@ instance Eq E
 instance Ord E 
 
 instance Num E where
+  -- x + x -> quad (Q 0 2 0 0 0 1) x = hom (2 0 0 1) x = 2x
   x + y = bihom (T 0 1 1 0 0 0 0 1) x y
   {-# INLINE (+) #-}
+  -- x - x -> quad (Q 0 0 0 0 0 1) x = hom (0 0 0 1) x = 0x
   x - y = bihom (T 0 1 (-1) 0 0 0 0 1) x y
   {-# INLINE (-) #-}
+  -- x * x -> quad (Q 1 0 0 0 0 1) x = x^2
   x * y = bihom (T 1 0 0 0 0 0 0 1) x y
   {-# INLINE (*) #-}
   negate x = hom (M (-1) 0 0 1) x
@@ -774,7 +773,9 @@ instance Num E where
   fromInteger n = Eff $ Quot $ V n 1
    
 instance Fractional E where
+  -- x / x -> quad (Q 0 1 0 0 1 0) x = hom (1 0 1 0) x = 1 for nice x
   x / y = bihom (T 0 1 0 0 0 0 1 0) x y
+  {-# INLINE (/) #-}
   recip x = hom (M 0 1 1 0) x
   fromRational (k :% n) = Eff $ Quot $ V k n
 
