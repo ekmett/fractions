@@ -358,8 +358,44 @@ dphin, dphip :: M (Fib Z)
 dphin = M (Fib 1 0) (Fib 0 0) (Fib 0 1) (Fib 1 1)
 dphip = M (Fib 1 1) (Fib 0 1) (Fib 0 0) (Fib 1 0)
 
-eval :: Floating a => Fib a -> a
-eval (Fib a b) = a * (1 + sqrt 5)/2
+--------------------------------------------------------------------------------
+-- * Affine transformations
+--------------------------------------------------------------------------------
+
+-- @
+-- M a = Af (V a)
+-- T a = Af (Af (V a))
+-- @
+
+-- f(x) = ax + b
+data Af a = Af a a
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+-- | composition
+--
+-- @
+-- f(g(x)) = a(cx+d)+b = (ac)x + (ad+b)
+-- @
+instance Num a => Semigroup (Af a) where
+  Af a b <> Af c d = Af (a*c) (a*d+b)
+
+instance Num a => Monoid (Af a) where
+  mempty = Af 1 0
+  mappend = (<>)
+  
+-- | construct a homographic transform from an affine transform
+am :: Num a => Af a -> M a
+am (Af a b) = M a b 0 1
+
+-- | convert an affine transform into a polynomial
+ap :: IntegralDomain a => Af a -> P a 
+ap (Af 0 0) = P []
+ap (Af 0 b) = P [b]
+ap (Af a b) = P [b,a]
+
+-- | evaluate an affine transformation
+affine :: Num a => Af a -> a -> a
+affine (Af a b) x = a*x + b
 
 --------------------------------------------------------------------------------
 -- * composite digit matrices
@@ -587,7 +623,7 @@ cfbounds (M a b c d)
 
 -- |
 -- @
--- z = T a b c d e f g h
+-- z = T a b c d e f g h = Af (Af (V a e) (V b f)) (Af (V c g) (V d h))
 -- @
 --
 -- represents the function
@@ -880,7 +916,7 @@ nextF (Hom m@(M a b c d) xs)
   , signum c * signum (c + d) > 0 -- knuth style warmup?
   , q <- quot a c
   , q == quot b d
-  , n <- cf q = Just (q, Hom (inv n <> m) xs)
+  , n <- cfdigit q = Just (q, Hom (inv n <> m) xs)
 nextF (Hom m xs) = nextF (hom m xs) -- fetch more
 nextF (Hurwitz m) = nextF (Hom (fmap at0 m) $ Hurwitz (fmap (<> P [1,1]) m)) -- explicitly used Hom to keep it from merging back
 
@@ -925,19 +961,19 @@ instance Floating E where
   tanh x = quad (Q 1 0 (-1) 1 0 1) (exp x)
   
 sqrt2 :: Eff f => f
-sqrt2 = eff $ cf 1 `hom` hurwitz (M 2 1 1 0)
+sqrt2 = eff $ cfdigit 1 `hom` hurwitz (M 2 1 1 0)
 
 --------------------------------------------------------------------------------
 -- * Continued Fractions
 --------------------------------------------------------------------------------
 
 -- continued fraction digit
-cf :: Num a => a -> M a
-cf a = M a 1 1 0
+cfdigit :: Num a => a -> M a
+cfdigit a = M a 1 1 0
 
 -- generalized continued fraction digit
-gcf :: Num a => a -> a -> M a
-gcf a b = M a b 1 0
+gcfdigit :: Num a => a -> a -> M a
+gcfdigit a b = M a b 1 0
 
 --------------------------------------------------------------------------------
 -- * Redundant Binary Representation
