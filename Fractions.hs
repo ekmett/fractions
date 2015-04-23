@@ -309,8 +309,8 @@ instance Num a => Num (Fib a) where
   Fib a b * Fib c d = Fib (a*(c + d) + b*c) (a*c + b*d)
   Fib a b - Fib c d = Fib (a - c) (b - d)
   negate (Fib a b) = Fib (negate a) (negate b)
-  abs (Fib a b) = Fib (abs a) (abs b)
-  signum (Fib a b) = Fib (signum a) (signum b)
+  abs x = x
+  signum _ = Fib 0 1 -- with our current constraints this is all we can say, not willing to give up instances to do better.
   fromInteger n = Fib 0 (fromInteger n)
 
 instance Fractional a => Fractional (Fib a) where
