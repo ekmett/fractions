@@ -5,6 +5,9 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE MagicHash #-}
+
+module Fractions where
+
 import Control.Applicative
 import Data.Bits
 import Data.Foldable
@@ -267,12 +270,44 @@ data M a = M
   a a
   deriving (Functor, Show, Traversable)
 
+instance Num a => Semigroup (M a) where
+  M a b c d <> M e f g h = M (a*e+b*g) (a*f+b*h) (c*e+d*g) (c*f+d*h)
+
+instance Num a => Monoid (M a) where
+  mempty = M 1 0 0 1
+  mappend = (<>)
+
 instance Foldable M where
   foldMap f (M a b c d) = f a `mappend` f b `mappend` f c `mappend` f d
   foldl1 f (M a b c d) = f (f (f a b) c) d
 
 instance Columns M where
   columns f (M a b c d) = f (V a c) <> f (V b d)
+
+-- | determinant of the matrix
+--
+-- @
+-- det m * det n = det (m <> n)
+-- @
+det :: Num a => M a -> a
+det (M a b c d) = a*d - b*c
+
+-- | The "tame inverse" of a linear fractional transformation
+--
+--
+-- @
+-- inv m <> m = Hom (det m) 0 0 (det m) = mempty, given det m /= 0
+-- @
+inv :: Num a => M a -> M a
+inv (M a b c d) = M (negate d) b c (negate a)
+
+-- | Apply a Mobius transformation to an extended rational.
+mv :: Num a => M a -> V a -> V a
+mv (M a b c d) (V e f) = V (a*e+b*f) (c*e+d*f)
+
+-- | Transpose a matrix
+transposeM :: M a -> M a
+transposeM (M a b c d) = M a c b d
 
 -- | is m ∈ M⁺ ?
 posM :: M Z -> Bool
@@ -281,9 +316,9 @@ posM (M a b c d) = sigma (V a c) * sigma (V b d) == 1
 trace :: Num a => M a -> a
 trace (M a _ _ d) = a + d
 
--- characteristic polynomial of M
-charM :: Num a => M a -> P a
-charM m = P [det m,trace m,1]
+-- | characteristic polynomial of a linear fractional transformation
+char :: Num a => M a -> P a
+char m = P [det m,trace m,1]
 
 -- | Compute the invariance in the (needlessly extended) field of fractions of the coefficients.
 -- of a non-singular matrix m.
@@ -390,37 +425,6 @@ sh = M 0 1 (-1) 1
 sl :: Num a => M a
 sl = M 1 (-1) 1 0  
 
-instance Num a => Semigroup (M a) where
-  M a b c d <> M e f g h = M (a*e+b*g) (a*f+b*h) (c*e+d*g) (c*f+d*h)
-
-instance Num a => Monoid (M a) where
-  mempty = M 1 0 0 1
-  mappend = (<>)
-
--- | determinant of the matrix
---
--- @
--- det m * det n = det (m <> n)
--- @
-det :: Num a => M a -> a
-det (M a b c d) = a*d - b*c
-
--- | The "tame inverse" of a linear fractional transformation
---
---
--- @
--- inv m <> m = Hom (det m) 0 0 (det m) = mempty, given det m /= 0
--- @
-inv :: Num a => M a -> M a
-inv (M a b c d) = M (negate d) b c (negate a)
-
--- | Apply a Mobius transformation to an extended rational.
-mv :: Num a => M a -> V a -> V a
-mv (M a b c d) (V e f) = V (a*e+b*f) (c*e+d*f)
-
--- | Transpose a matrix
-transposeM :: M a -> M a
-transposeM (M a b c d) = M a c b d
 
 -- |
 -- @
