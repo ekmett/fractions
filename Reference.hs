@@ -511,11 +511,6 @@ half = ((1,0),(0,2))
 dbl  = ((2,0),(0,1))
 quad = ((4,0),(0,1))
 
-sinT, cosT, tanT :: Tensor
-sinT = (((0,1),(1,0)),((1,0),(0,1)))
-cosT = (((-1,1),(0,0)),((0,0),(1,1)))
-tanT = (((0,-1),(1,0)),((1,0),(0,1)))
-
 reconePx2 :: Tensor
 reconePx2 = (((0,1),(0,0)),((0,0),(1,1)))
 
@@ -564,13 +559,30 @@ instance Floating Expression where
     yL = replicate (fromInteger 2^k) y
     y  = app (LftM ((1,0),(0,2^k))) (one e)
     k  = findk e
+  -- quadratic fractional transformation
   sin e = app (LftT sinT 0) f where
-    f d = stoe $ sem $ tan (app (LftM half) (one e) ) 
+    sinT = (((0,1),(1,0)),((1,0),(0,1)))
+    f _ = stoe $ sem $ tan (app (LftM half) (one e) ) 
+  -- quadratic fractional transformation
   cos e = app (LftT cosT 0) f where
-    f d = stoe $ sem $ tan (app (LftM half) (one e) )
+    cosT = (((-1,1),(0,0)),((0,0),(1,1)))
+    f _ = stoe $ sem $ tan (app (LftM half) (one e) )
+  -- quadratic fractional transformation
+  sinh e = app (LftT sinhT 0) f where
+    sinhT = (((1,0),(0,1)),((0,1),(-1,0)))
+    f _ = stoe $ sem $ exp e
+  -- quadratic fractional transformation
+  cosh e = app (LftT coshT 0) f where
+    coshT = (((1,0),(0,1)),((0,1),(1,0)))
+    f _ = stoe $ sem $ exp e
+  -- quadratic fractional transformation
+  tanh e = app (LftT tanhT 0) f where
+    tanhT = (((1,1),(0,0)),((0,0),(-1,1)))
+    f _ = stoe $ sem $ exp e
   sqrt = eiteratex itersqrtspos 0
   log = eiteratex iterlogspos 0
   tan e = head (mrgExps tanT xL) where
+    tanT = (((0,-1),(1,0)),((1,0),(0,1)))
     xL = map (etanszer . (app iszer) . one) yL
     yL = replicate (fromInteger 2^k) y
     y  = app (LftM ((1,0),(0,2^k))) (one e)
