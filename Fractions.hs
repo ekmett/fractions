@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE MagicHash #-}
@@ -8,10 +10,11 @@ import Data.Bits
 import Data.Foldable
 import Data.Ratio
 import Data.Semigroup
+import Data.Traversable
 import GHC.Real (Ratio((:%)))
 import GHC.Types (Int(..))
 import GHC.Integer.Logarithms
-import Prelude hiding (foldr)
+import Prelude hiding (foldr, foldl1)
 
 type Z = Integer
 
@@ -28,7 +31,7 @@ instance IntegralDomain Float
 instance IntegralDomain Double
 
 data P a = P [a]
-  deriving (Show, Eq)
+  deriving (Show, Eq, Foldable, Functor)
 
 instance IntegralDomain a => IntegralDomain (P a) where
 
@@ -106,8 +109,11 @@ instance IntegralDomain a => Num (P a) where
 -- ∞ = V a 0, a /= 0
 -- @
 data V a = V a a
-  deriving (Show, Functor)
+  deriving (Show, Functor, Traversable)
 
+instance Foldable V where
+  foldMap k (V a b) = k a `mappend` k b
+  foldl1 k (V a b) = k a b
 
 mediant :: Num a => V a -> V a -> V a
 mediant (V a b) (V c d) = V (a + c) (b + d)
@@ -208,29 +214,20 @@ instance (Integral a, IntegralDomain a) => RealFrac (V a) where
   properFraction (V a b) = case divMod a b of
     (q, r) -> (fromIntegral q, V r b)
 
--- for rescaling V,M,T,Q
 
 integerLog2 :: Integer -> Int
 integerLog2 i = I# (integerLog2# i)
 
--- divide out all residual powers of 2
+-- | divide out all residual powers of 2
+--
+-- Used for rescaling @V Z@, @M Z@, @T Z@, and @Q Z@ intermediate results.
 scale :: (Foldable f, Functor f) => f Z -> f Z
 scale xs
-  | m <- foldl' (.|.) 0 xs
-  , s <- integerLog2 (m .&. negate m) = fmap (`unsafeShiftR` s) xs
-
-{-
--- determine the minimum bit set across all
-scale :: (Foldable f, Functor f) => f Z -> f Z
-scale t 
-  | bs == 0 = t -- this thing is all 0's leave it alone
-  | -- find the first bit by fibonacci search
-  where
-    bs = getOr (foldMap Or t)
-    lsb = bs .&. -bs
-  | any (`testBit` 0) = t
-  | otherwise = fmap (`unsafeShiftR` 1) t
--}
+  | n <= 1 = xs -- lsb is a 1, or we're 0, keep original
+  | s <- integerLog2 n = fmap (`unsafeShiftR` s) xs
+  where 
+    m = foldl1 (.|.) xs -- of all the bits
+    n = m .&. negate m  -- keep least significant set bit
 
 instance IntegralDomain a => IntegralDomain (V a)
 
@@ -240,30 +237,9 @@ data I
 
 class Columns f where
   columns :: Semigroup m => (V a -> m) -> f a -> m
-{-
-  info :: f Z -> Maybe (V Z, V Z)
-  info = interval (list
- 
-bottom :: Columns f => f Z -> Bool
-bottom = columns $ \(V a b) -> columns $ \(V c d) -> Any (u 
-
-interval :: f Z -> I 
-interval xs
-  | bottom xs = U
-  | otherwise = 
--}
-
-
-
 
 instance Columns V where
   columns f v = f v
-
-{-
-info :: Columns f => f a -> Maybe (V a, V a)
-info v = Just (v,v)
--}
-
 
 sigma :: V Z -> Z
 sigma (V a b) = case compare a 0 of
@@ -291,7 +267,11 @@ data M a = M
   a a
   ---
   a a
-  deriving (Functor, Show)
+  deriving (Functor, Show, Traversable)
+
+instance Foldable M where
+  foldMap f (M a b c d) = f a `mappend` f b `mappend` f c `mappend` f d
+  foldl1 f (M a b c d) = f (f (f a b) c) d
 
 instance Columns M where
   columns f (M a b c d) = f (V a c) <> f (V b d)
@@ -436,9 +416,11 @@ det (M a b c d) = a*d - b*c
 inv :: Num a => M a -> M a
 inv (M a b c d) = M (negate d) b c (negate a)
 
+-- | Apply a Mobius transformation to an extended rational.
 mv :: Num a => M a -> V a -> V a
 mv (M a b c d) (V e f) = V (a*e+b*f) (c*e+d*f)
 
+-- | Transpose a matrix
 transposeM :: M a -> M a
 transposeM (M a b c d) = M a c b d
 
@@ -500,7 +482,11 @@ data T a = T
   a a a a
   -------
   a a a a
-  deriving (Functor, Show)
+  deriving (Functor, Show, Traversable)
+
+instance Foldable T where
+  foldMap k (T a b c d e f g h) = k a `mappend` k b `mappend` k c `mappend` k d `mappend` k e `mappend` k f `mappend` k g `mappend` k h 
+  foldl1 k (T a b c d e f g h) = k (k (k (k (k (k (k a b) c) d) e) f) g) h
 
 instance Columns T where
   columns k (T a b c d e f g h) = k (V a e) <> k (V b f) <> k (V c g) <> k (V d h)
@@ -527,12 +513,18 @@ tm2 (T a b a' b' c d c' d') (M e f g h) = T
   (c*e+d*g) (c*f+d*h) (c'*e+d'*g) (c'*f+d'*h)
 
 -- |
+-- Apply a bihomographic transformation to an extended rational.
+-- The result is a residual homographic transformation.
+--
+-- @
 -- z(k/n,y) = (a(k/n) + c)y + (b(k/n) + d)
 --            ----------------------------
 --            (e(k/n) + g)y + (f(k/n) + h)
+--
 --          = (ka + nc)y + (kb+nd)
 --            --------------------
 --            (ke + ng)y + (kf+nh)
+-- @
 tq1 :: Num a => T a -> V a -> M a
 tq1 (T a b c d e f g h) (V k n) = M
   (k*a+n*c) (k*b+n*d)
@@ -540,10 +532,15 @@ tq1 (T a b c d e f g h) (V k n) = M
   (k*e+n*g) (k*f+n*h)
 
 -- |
+--
+-- Apply a bihomographic transformation to an extended rational.
+-- The result is a residual homographic transformation.
+--
 -- @
 -- z(x,k/n) = ax(k/n) + bx + c(k/n) + d
 --            -------------------------
 --            ex(k/n) + fx + g(k/n) + d
+--
 --          = (ka + nb)x + (kc + nd)
 --            ----------------------
 --            (ke + nf)x + (kg + nh)
@@ -571,20 +568,20 @@ approx (T a b c d e f g h)
 --------------------------------------------------------------------------------
 
 -- |
+-- @
 -- z(x) = ax^2 + bx + c
 --        -------------
 --        dx^2 + ex + f
---
--- or
---
--- z(x,y) = ax^2 + bxy + cy^2
---          -----------------
---          dx^2 + exy + fy^2
+-- @
 data Q a = Q
   a a a
   -----
   a a a
-  deriving (Show, Functor)
+  deriving (Show, Functor, Traversable)
+
+instance Foldable Q where
+  foldMap k (Q a b c d e f) = k a `mappend` k b `mappend` k c `mappend` k d `mappend` k e `mappend` k f
+  foldl1 k (Q a b c d e f) = k (k (k (k (k a b) c) d) e) f
 
 instance Columns Q where
   columns k (Q a b c d e f) = k (V a d) <> k (V b e) <> k (V c f)
@@ -603,15 +600,20 @@ qv (Q a b c d e f) (V g h)
   , hh <- h*h
   = V (a*gg + b*gh + c*hh) (d*gg + e*gh + f*hh)
 
+-- |
+-- @
 -- z(m(x)) = a((gx+h)/(ix+j))^2 + b(gx+h)/(ix+j) + c
 --           ---------------------------------------
 --           d((gx+h)/(ix+j))^2 + e(gx+h)/(ix+j) + f
+--
 --         = a(gx+h)^2 + b(gx+h)(ix+j) + c(ix+j)^2
 --           -------------------------------------
 --           d(gx+h)^2 + e(gx+h)(ix+j) + f(ix+j)^2
+--
 --         = (agg + bgi + cii)x^2 + (2ahg + b(hi + gj) + 2cij)x  + (ahh + bhj + cjj)
 --           ---------------------------------------------------------------------
 --         = (dgg + egi + fii)x^2 + (2dhg + e(hi + gj) + 2fij)x  + (dhh + ehj + fjj)
+-- @
 qm :: Num a => Q a -> M a -> Q a
 qm (Q a b c d e f) (M g h i j)
   | gg <- g*g
@@ -628,12 +630,16 @@ qm (Q a b c d e f) (M g h i j)
   -------------------------------------------------------------------
   (d*gg + e*gi + f*ii) (d*hg2 + e*hi_gj + f*ij2) (d*hh + e*hj + f*jj)
   
+-- |
+-- @
 -- m(z(x)) = a(ex^2+fx+g) + b(hx^2+ix+j)
 --           ---------------------------
 --           c(ex^2+fx+g) + d(hx^2+ix+j)
+--
 --         = (ae+bh)x^2 + (af+bi)x + ag+bj
 --           -----------------------------
 --           (ce+dh)x^2 + (cf+di)x + cg+dj
+-- @
 mq :: Num a => M a -> Q a -> Q a
 mq (M a b c d) (Q e f g h i j) = Q
   (a*e+b*h) (a*f+b*i) (a*g+b*j)
@@ -666,8 +672,8 @@ class Hom a where
   hom :: M Z -> a -> a
 
 instance Hom F where
-  hom m (Quot v) = Quot (mv m v)
-  hom m (Hom n x) = Hom (m <> n) x -- check for efficiency
+  hom m (Quot v) = Quot $ scale $ mv m v
+  hom m (Hom n x) = Hom (scale $ m <> n) x -- check for efficiency
   hom (fmap lift -> m) (Hurwitz o) = hurwitz (m <> o <> inv m)
 
 class Eff a where
@@ -688,8 +694,8 @@ instance Eff E where
 
 instance Hom E where
   hom m (Eff f)       = eff (hom m f)
-  hom m (Quad q x)    = quad (mq m q) x
-  hom m (Mero s t x)  = mero (mt m s) t x
+  hom m (Quad q x)    = quad (scale $ mq m q) x
+  hom m (Mero s t x)  = mero (scale $ mt m s) t x
   hom m (Bihom s x y) = bihom (mt m s) x y
 
 -- | apply a meromorphic function
@@ -714,7 +720,7 @@ mero s t x = Mero s t x
 bihom :: T Z -> E -> E -> E
 bihom m (Eff (Quot r)) y = hom (tq1 m r) y
 bihom m x (Eff (Quot r)) = hom (tq2 m r) x
-bihom m x y = Bihom m x y
+bihom m x y = Bihom (scale m) x y
 {-# NOINLINE bihom #-}
 
 quad :: Q Z -> E -> E
