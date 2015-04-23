@@ -9,6 +9,7 @@
 module Fractions where
 
 import Control.Applicative
+import Control.Monad.Zip
 import Data.Bits
 import Data.Foldable
 import Data.Ratio
@@ -272,6 +273,107 @@ posV (V a b) = case compare a 0 of
   GT -> b >= 0
 
 --------------------------------------------------------------------------------
+-- * Z((1+√5)/2)
+--------------------------------------------------------------------------------
+
+-- |
+-- @Fib a b :: Fib r@ denotes @aΦ + b@ ∈ r(Φ)
+data Fib a = Fib a a
+  deriving (Show, Functor, Foldable, Traversable)
+
+instance Num a => Num (Fib a) where
+  Fib a b + Fib c d = Fib (a + c) (b + d)
+  Fib a b * Fib c d = Fib (a*(c + d) + b*c) (a*c + b*d)
+  Fib a b - Fib c d = Fib (a - c) (b - d)
+  negate (Fib a b) = Fib (negate a) (negate b)
+  abs (Fib a b) = Fib (abs a) (abs b)
+  signum (Fib a b) = Fib (signum a) (signum b)
+  fromInteger n = Fib 0 (fromInteger n)
+
+instance Fractional a => Fractional (Fib a) where
+  recip (Fib a b) = Fib (-a/d) ((a+b)/d) where
+    d = b*b + a*b - a*a
+  fromRational r = Fib 0 (fromRational r)
+
+instance Applicative Fib where
+  pure a = Fib a a
+  Fib a b <*> Fib c d = Fib (a c) (b d)
+
+instance Monad Fib where
+  return a = Fib a a
+  Fib a b >>= f = Fib a' b' where
+    Fib a' _ = f a
+    Fib _ b' = f b
+
+instance MonadZip Fib where
+  mzipWith f (Fib a b) (Fib c d) = Fib (f a c) (f b d)
+  munzip (Fib (a,b) (c,d)) = (Fib a c, Fib b d)
+
+class Num a => Golden a where
+  -- | (1 + sqrt 5)/2
+  phi :: a
+  default phi :: Floating a => a
+  phi = (1 + sqrt 5)*0.5
+
+-- |
+-- @
+-- sqrt 5 = phi + iphi
+-- @
+sqrt5 :: Golden a => a
+sqrt5 = 2*phi - 1
+
+-- | 
+-- @
+-- phi * iphi = 1
+-- @
+iphi :: Golden a => a
+iphi = phi - 1
+
+instance Num a => Golden (Fib a) where
+  phi = Fib 1 0 
+
+instance Golden Float
+instance Golden Double
+instance Golden E
+
+unfib :: Golden a => Fib a -> a
+unfib (Fib a b) = a*phi + b
+
+-- fast fibonacci transform
+fib :: Num a => Integer -> a
+fib n
+  | n >= 0 = getPhi (phi ^ n)
+  | otherwise = getPhi (iphi ^ negate n)
+
+getPhi :: Fib a -> a
+getPhi (Fib a _) = a
+
+-- |
+-- redundant digits in base Φ
+-- @
+-- dphin = digit phi (-iphi)
+-- dphip = digit phi iphi
+-- @
+dphin, dphip :: M (Fib Z)
+dphin = M (Fib 1 0) (Fib 0 0) (Fib 0 1) (Fib 1 1)
+dphip = M (Fib 1 1) (Fib 0 1) (Fib 0 0) (Fib 1 0)
+
+eval :: Floating a => Fib a -> a
+eval (Fib a b) = a * (1 + sqrt 5)/2
+
+--------------------------------------------------------------------------------
+-- * composite digit matrices
+--------------------------------------------------------------------------------
+
+-- | b = base, d = digit
+digit :: Num a => a -> a -> M a
+digit b d | a <- b-1, c <- b+1 = M (c+d) (a+d) (a-d) (c-d)
+
+-- | b = base, n = number of bits, c = counter
+digits :: Num a => a -> Int -> a -> M a
+digits b n c = digit (b^n) c 
+
+--------------------------------------------------------------------------------
 -- * Mobius Transformations
 --------------------------------------------------------------------------------
 
@@ -324,6 +426,19 @@ transposeM (M a b c d) = M a c b d
 -- | is m ∈ M⁺ ?
 posM :: M Z -> Bool
 posM (M a b c d) = sigma (V a c) * sigma (V b d) == 1
+
+class Informed f where
+  -- # of digit matrices we can emit
+  most :: f Z -> Int
+  least :: f Z -> Int
+  
+instance Informed V where
+  most _ = maxBound
+  least _ = maxBound
+
+instance Informed M where
+  most m@(M a b c d) = floor $ logBase 2 $
+     fromIntegral ((a+b)*(c+d)) / fromIntegral (det m)
 
 trace :: Num a => M a -> a
 trace (M a _ _ d) = a + d
