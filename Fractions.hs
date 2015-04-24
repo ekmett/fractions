@@ -15,11 +15,12 @@ import Data.Foldable
 import Data.Ratio
 import Data.Semigroup
 import Data.Traversable
+import Data.Word
 import GHC.Real (Ratio((:%)))
 import GHC.Types (Int(..))
 import GHC.Integer.Logarithms
 import Linear (Additive(..))
-import Prelude hiding (foldr, foldl1)
+import Prelude hiding (foldr, foldl1, all)
 
 type Z = Integer
 
@@ -250,6 +251,69 @@ scaleP xs
   where
     m = (foldl'.foldl') (.|.) 0 xs -- of all the bits
     n = m .&. negate m  -- keep least significant set bit
+
+--------------------------------------------------------------------------------
+-- * Decimal reductions
+--------------------------------------------------------------------------------
+
+-- |
+--
+-- Z w/ Z mod 10 maintained in parallel
+--
+-- optimized for reduction in scale by factors of 10, which arise in decimal expansion.
+data Dec = Dec !Integer {-# UNPACK #-} !Word8
+  deriving Show
+
+-- TODO: figure out a fancy bit hack
+rem10 :: Word8 -> Word8
+rem10 x = rem x 10
+
+instance Eq Dec where
+  Dec a _ == Dec c _ = a == c
+
+instance Ord Dec where
+  Dec a _ `compare` Dec c _ = compare a c
+
+instance Num Dec where
+  Dec a b + Dec c d = Dec (a + c) (rem10 $ b + d)
+  Dec a b - Dec c d = Dec (a - c) (rem10 $ b - d)
+  Dec a b * Dec c d = Dec (a * c) (rem10 $ b * d)
+  abs x@(Dec a b)
+    | a < 0 = Dec (negate a) (10 - b)
+    | otherwise = x
+  signum (Dec a _) = fromInteger (signum a)
+  fromInteger i = Dec i (fromInteger $ rem i 10)
+
+instance Real Dec where
+  toRational (Dec a _) = toRational a
+
+instance Enum Dec where
+  fromEnum (Dec a _) = fromInteger a
+  toEnum = fromIntegral
+  succ (Dec a b) = Dec (succ a) (rem10 $ b + 1)
+  pred (Dec a b) = Dec (pred a) (rem10 $ b - 1)
+
+-- div10 ms = unsafeShiftR (ms * 205) 11 -- computes div10 legally for [0,2047] in a 22 bit+ register
+
+instance Integral Dec where
+  toInteger (Dec a _) = a
+  quot (Dec a _) (Dec c _) = fromInteger (quot a c)
+  rem (Dec a _) (Dec c _) = fromInteger (rem a c)
+  quotRem (Dec a _) (Dec c _) = case quotRem a c of
+    (e, f) -> (fromInteger e, fromInteger f)
+  div (Dec a _) (Dec c _) = fromInteger (div a c)
+  mod (Dec a _) (Dec c _) = fromInteger (mod a c)
+  divMod (Dec a _) (Dec c _) = case divMod a c of
+    (e, f) -> (fromInteger e, fromInteger f)
+
+instance IntegralDomain Dec
+
+-- remove common factors of 10
+scale10 :: (Foldable f, Functor f) => f Dec -> f Dec
+scale10 xs
+  | foldl' (\r (Dec _ b) -> r .|. b) 0 xs /= 0 = xs
+  | all (==0) xs = xs
+  | otherwise = scale10 $ fmap (`div` 10) xs
 
 --------------------------------------------------------------------------------
 -- * Intervals
