@@ -20,7 +20,7 @@ import GHC.Real (Ratio((:%)))
 import GHC.Types (Int(..))
 import GHC.Integer.Logarithms
 import Linear (Additive(..))
-import Prelude hiding (foldr, foldl1, all)
+import Prelude hiding (foldr, foldl1, all, any)
 
 type Z = Integer
 
@@ -311,8 +311,8 @@ instance IntegralDomain Dec
 -- remove common factors of 10
 scale10 :: (Foldable f, Functor f) => f Dec -> f Dec
 scale10 xs
-  | foldl' (\r (Dec _ b) -> r .|. b) 0 xs /= 0 = xs
-  | all (==0) xs = xs
+  | any (\(Dec _ b) -> b /= 0) xs = xs
+  | all (\(Dec a _) -> a == 0) xs = xs
   | otherwise = scale10 $ fmap (`div` 10) xs
 
 --------------------------------------------------------------------------------
