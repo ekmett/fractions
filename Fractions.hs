@@ -598,10 +598,10 @@ char m = P [det m,trace m,1]
 -- invariance m = (trace m)^2 / det m
 -- @
 invariance :: IntegralDomain a => M a -> V a
-invariance (M a b c d)
-  | ad <- a*d
-  , bc <- b*c
-  = V (ad*ad) (ad-bc)
+invariance m
+  | tr <- trace m
+  , dt <- det m
+  = V (tr*tr) dt
 
 conjugate :: IntegralDomain a => M a -> M a -> Bool
 conjugate m n
